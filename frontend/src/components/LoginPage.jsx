@@ -1,3 +1,4 @@
+import { useState, useRef } from 'react';
 import { LogIn, Loader2, ShieldCheck, Lock, Eye, EyeOff, Sparkles, MessageCircleCode, UserPlus, Camera, Mail, KeyRound, ArrowLeft, RefreshCw } from 'lucide-react';
 import { apiLogin, apiSendOtp, apiRegister, apiUploadFile } from '../services/supabaseService';
 import SupabaseSetupBanner from './SupabaseSetupBanner';
