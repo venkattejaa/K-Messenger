@@ -6,7 +6,7 @@ import MemoryLane from './components/MemoryLane';
 import VideoCallOverlay from './components/VideoCallOverlay';
 import LoginPage from './components/LoginPage';
 import ProfileModal from './components/ProfileModal';
-import { apiGetUsers } from './services/supabaseService';
+import { apiGetUsers, apiUploadFile } from './services/supabaseService';
 
 function App() {
   const [loggedIn, setLoggedIn] = useState(false);
@@ -105,15 +105,8 @@ function App() {
   }, [sendChatMessage]);
 
   const handleUpload = useCallback(async (file) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    
     try {
-      const res = await fetch(`${getApiBaseUrl()}/upload`, {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json();
+      const data = await apiUploadFile(file);
       if (data.media_url) {
         sendChatMessage('', data.media_url);
       }
