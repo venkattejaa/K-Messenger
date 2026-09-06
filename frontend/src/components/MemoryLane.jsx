@@ -1,5 +1,6 @@
 import { Image as ImageIcon, Loader2, X, Maximize2, Sparkles, Download, Calendar, Search, Layers } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
+import { getApiBaseUrl } from '../config';
 
 export default function MemoryLane({ currentUserId }) {
   const [images, setImages] = useState([]);
@@ -9,7 +10,7 @@ export default function MemoryLane({ currentUserId }) {
 
   const fetchGallery = useCallback(async () => {
     try {
-      const res = await fetch('/gallery');
+      const res = await fetch(`${getApiBaseUrl()}/gallery`);
       const data = await res.json();
       setImages(data);
     } catch (err) {

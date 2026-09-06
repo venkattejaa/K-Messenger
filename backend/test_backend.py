@@ -176,7 +176,19 @@ async def test_full_system():
         assert gallery[0]["media_url"] == media_url
         print(f"✓ REST /gallery returned {len(gallery)} media items")
 
+        # 10. Test DELETE /messages clear endpoint
+        resp = await client.delete("/messages")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "success"
+
+        # Verify messages list is now empty
+        resp = await client.get("/messages")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 0
+        print("✓ DELETE /messages successfully cleared chat history")
+
     print("\nALL SYSTEM TESTS PASSED SUCCESSFULLY!")
 
 if __name__ == "__main__":
     asyncio.run(test_full_system())
+

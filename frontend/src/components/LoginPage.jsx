@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { LogIn, Loader2, ShieldCheck, Lock, Eye, EyeOff, Sparkles, MessageCircleCode, UserPlus, Camera, Mail, KeyRound, ArrowLeft, RefreshCw } from 'lucide-react';
+import { getApiBaseUrl } from '../config';
 
 export default function LoginPage({ onLogin }) {
   const [activeTab, setActiveTab] = useState('register'); // 'register' or 'login'
@@ -40,7 +41,7 @@ export default function LoginPage({ onLogin }) {
     formData.append('file', file);
 
     try {
-      const res = await fetch('/upload', {
+      const res = await fetch(`${getApiBaseUrl()}/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -63,7 +64,7 @@ export default function LoginPage({ onLogin }) {
     setLoading(true);
 
     try {
-      const res = await fetch('/login', {
+      const res = await fetch(`${getApiBaseUrl()}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, passcode }),
@@ -100,7 +101,7 @@ export default function LoginPage({ onLogin }) {
     setSendingOtp(true);
 
     try {
-      const res = await fetch('/send-otp', {
+      const res = await fetch(`${getApiBaseUrl()}/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: regEmail.trim() }),
@@ -134,7 +135,7 @@ export default function LoginPage({ onLogin }) {
 
     try {
       const finalPasscode = regPasscode.trim() || '1234';
-      const res = await fetch('/register', {
+      const res = await fetch(`${getApiBaseUrl()}/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

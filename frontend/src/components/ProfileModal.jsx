@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { X, Camera, User, Check, Loader2, Sparkles, Lock, Edit3 } from 'lucide-react';
+import { getApiBaseUrl } from '../config';
 
 export default function ProfileModal({ userProfile, onUpdateProfile, onClose }) {
   const [username, setUsername] = useState(userProfile.username || '');
@@ -25,7 +26,7 @@ export default function ProfileModal({ userProfile, onUpdateProfile, onClose }) 
     formData.append('file', file);
 
     try {
-      const res = await fetch('/upload', {
+      const res = await fetch(`${getApiBaseUrl()}/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -54,7 +55,7 @@ export default function ProfileModal({ userProfile, onUpdateProfile, onClose }) 
     setSuccessMsg('');
 
     try {
-      const res = await fetch('/profile', {
+      const res = await fetch(`${getApiBaseUrl()}/profile`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

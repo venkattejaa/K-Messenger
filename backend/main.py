@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, delete
 from sqlalchemy.orm import selectinload
 
 from database import init_db, get_session, User, Message, async_session
@@ -334,6 +334,18 @@ async def get_messages(limit: int = 200, session: AsyncSession = Depends(get_ses
     ]
 
 
+@app.delete("/messages")
+async def clear_messages(session: AsyncSession = Depends(get_session)):
+    """Clear all chat messages from database and broadcast clear event."""
+    await session.execute(delete(Message))
+    await session.commit()
+
+    broadcast_payload = {"type": "clear_chat"}
+    await manager.broadcast_to_all(broadcast_payload)
+    return {"status": "success", "message": "All chat messages cleared successfully"}
+
+
+
 @app.post("/messages/{message_id}/react")
 async def react_to_message(message_id: int, request: ReactionRequest, session: AsyncSession = Depends(get_session)):
     """Add or toggle an emoji reaction on a message."""
@@ -480,6 +492,13 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                                 "reactions": reactions_dict,
                             }
                             await manager.broadcast_to_all(broadcast_payload)
+
+            elif msg_type == "clear_chat":
+                async with async_session() as session:
+                    await session.execute(delete(Message))
+                    await session.commit()
+                await manager.broadcast_to_all({"type": "clear_chat"})
+
 
             elif msg_type == "signal":
                 # 2. Bypass database and immediately forward payload to the other connected client

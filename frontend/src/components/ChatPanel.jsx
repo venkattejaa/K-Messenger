@@ -22,6 +22,7 @@ export default function ChatPanel({
   customNickname,
   onSaveNickname,
   onReactMessage,
+  onClearChat,
 }) {
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -416,6 +417,7 @@ export default function ChatPanel({
         contactName={partnerOriginalName}
         currentNickname={customNickname}
         onSaveNickname={onSaveNickname}
+        onClearChat={onClearChat}
       />
     </div>
   );

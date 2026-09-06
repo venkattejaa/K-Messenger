@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { X, Edit3, UserCheck, RotateCcw, Sparkles } from 'lucide-react';
+import { X, Edit3, UserCheck, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 
-export default function NicknameModal({ isOpen, onClose, contactName, currentNickname, onSaveNickname }) {
+export default function NicknameModal({ isOpen, onClose, contactName, currentNickname, onSaveNickname, onClearChat }) {
   const [nickname, setNickname] = useState(currentNickname || '');
+  const [confirmClear, setConfirmClear] = useState(false);
 
   if (!isOpen) return null;
 
@@ -15,6 +16,14 @@ export default function NicknameModal({ isOpen, onClose, contactName, currentNic
   const handleReset = () => {
     setNickname('');
     onSaveNickname('');
+    onClose();
+  };
+
+  const handleClearHistory = () => {
+    if (onClearChat) {
+      onClearChat();
+    }
+    setConfirmClear(false);
     onClose();
   };
 
@@ -31,7 +40,7 @@ export default function NicknameModal({ isOpen, onClose, contactName, currentNic
             <div className="p-2 rounded-xl bg-gradient-to-tr from-pink-500 to-purple-600 text-white shadow-md">
               <Sparkles className="w-4 h-4" />
             </div>
-            <h3 className="text-slate-100 font-bold text-base">Edit Nickname</h3>
+            <h3 className="text-slate-100 font-bold text-base">Chat Options</h3>
           </div>
           <button
             onClick={onClose}
@@ -84,7 +93,42 @@ export default function NicknameModal({ isOpen, onClose, contactName, currentNic
             </button>
           </div>
         </form>
+
+        {/* Clear Chat History Section */}
+        <div className="mt-5 pt-4 border-t border-slate-800/80">
+          {!confirmClear ? (
+            <button
+              type="button"
+              onClick={() => setConfirmClear(true)}
+              className="w-full py-2.5 px-3 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/50 text-rose-300 font-semibold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4 text-rose-400" />
+              Clear Chat History
+            </button>
+          ) : (
+            <div className="space-y-2 animate-fadeIn bg-rose-950/60 border border-rose-800 p-3 rounded-xl text-center">
+              <p className="text-xs font-semibold text-rose-200">Clear all chat messages permanently?</p>
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setConfirmClear(false)}
+                  className="flex-1 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-xs font-medium hover:bg-slate-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearHistory}
+                  className="flex-1 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-md"
+                >
+                  Yes, Clear All
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
+

@@ -6,6 +6,7 @@ import MemoryLane from './components/MemoryLane';
 import VideoCallOverlay from './components/VideoCallOverlay';
 import LoginPage from './components/LoginPage';
 import ProfileModal from './components/ProfileModal';
+import { getApiBaseUrl } from './config';
 
 function App() {
   const [loggedIn, setLoggedIn] = useState(false);
@@ -27,7 +28,7 @@ function App() {
 
   const fetchAllUsers = useCallback(async () => {
     try {
-      const res = await fetch('/users');
+      const res = await fetch(`${getApiBaseUrl()}/users`);
       if (res.ok) {
         const data = await res.json();
         setAllUsers(data);
@@ -50,6 +51,7 @@ function App() {
     sendChatMessage,
     reactMessage,
     sendSignal,
+    clearMessages,
   } = useChat(currentUserId, clientId, handleSignalCallback);
 
   const {
@@ -110,7 +112,7 @@ function App() {
     formData.append('file', file);
     
     try {
-      const res = await fetch('/upload', {
+      const res = await fetch(`${getApiBaseUrl()}/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -165,6 +167,7 @@ function App() {
               customNickname={customNickname}
               onSaveNickname={handleSaveNickname}
               onReactMessage={reactMessage}
+              onClearChat={clearMessages}
             />
           </main>
 

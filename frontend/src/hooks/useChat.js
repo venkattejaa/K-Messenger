@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { getApiBaseUrl, getWsUrl } from '../config';
 
 export function useChat(userId, clientId, onSignal) {
   const [messages, setMessages] = useState([]);
@@ -18,8 +19,7 @@ export function useChat(userId, clientId, onSignal) {
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/${clientId}`;
+    const wsUrl = getWsUrl(clientId);
 
     try {
       const ws = new WebSocket(wsUrl);
@@ -46,6 +46,8 @@ export function useChat(userId, clientId, onSignal) {
             });
           } else if (data.type === 'reaction') {
             setMessages(prev => prev.map(m => m.id === data.message_id ? { ...m, reactions: data.reactions } : m));
+          } else if (data.type === 'clear_chat') {
+            setMessages([]);
           } else if (data.type === 'signal') {
             if (onSignalRef.current) {
               onSignalRef.current(data.signal_type, data.data, data.from_client_id);
@@ -134,7 +136,7 @@ export function useChat(userId, clientId, onSignal) {
 
   const fetchMessages = useCallback(async () => {
     try {
-      const res = await fetch('/messages');
+      const res = await fetch(`${getApiBaseUrl()}/messages`);
       if (res.ok) {
         const data = await res.json();
         setMessages(data);
@@ -152,6 +154,19 @@ export function useChat(userId, clientId, onSignal) {
     return () => disconnect();
   }, [userId, connect, disconnect, fetchMessages]);
 
+  const clearMessages = useCallback(async () => {
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/messages`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        setMessages([]);
+      }
+    } catch (err) {
+      console.error('Failed to clear messages:', err);
+    }
+  }, []);
+
   return {
     messages,
     connected,
@@ -159,6 +174,7 @@ export function useChat(userId, clientId, onSignal) {
     sendChatMessage,
     reactMessage,
     sendSignal,
+    clearMessages,
     connect,
     disconnect,
     refetchMessages: fetchMessages,
