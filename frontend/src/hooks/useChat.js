@@ -1,24 +1,101 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getApiBaseUrl, getWsUrl } from '../config';
+import { supabase, isSupabaseConfigured } from '../supabaseClient';
+import {
+  apiGetMessages,
+  apiSendMessage,
+  apiReactMessage,
+  apiClearMessages,
+} from '../services/supabaseService';
+import { getWsUrl } from '../config';
 
 export function useChat(userId, clientId, onSignal) {
   const [messages, setMessages] = useState([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState(null);
   const wsRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
-  const reconnectAttemptsRef = useRef(0);
-  const maxReconnectAttempts = 10;
-  const baseReconnectDelay = 1000;
+  const realtimeChannelRef = useRef(null);
+  const signalChannelRef = useRef(null);
   const onSignalRef = useRef(onSignal);
 
   useEffect(() => {
     onSignalRef.current = onSignal;
   }, [onSignal]);
 
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+  // Fetch initial messages history
+  const fetchMessages = useCallback(async () => {
+    try {
+      const msgs = await apiGetMessages();
+      setMessages(msgs);
+    } catch (err) {
+      console.error('Failed to fetch messages:', err);
+    }
+  }, []);
 
+  // --- SUPABASE REALTIME SUBSCRIPTION MODE ---
+  const connectSupabaseRealtime = useCallback(() => {
+    setConnected(true);
+    setError(null);
+
+    // 1. Subscribe to Postgres Changes on 'messages' table
+    const msgChannel = supabase
+      .channel('messages_realtime_channel')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages' },
+        (payload) => {
+          const newRow = payload.new;
+          const formatted = {
+            id: newRow.id,
+            sender_id: newRow.sender_id,
+            text_content: newRow.text_content,
+            media_url: newRow.media_url,
+            reactions: typeof newRow.reactions === 'string' ? JSON.parse(newRow.reactions) : newRow.reactions || {},
+            timestamp: newRow.timestamp,
+          };
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === formatted.id)) return prev;
+            return [...prev, formatted];
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'messages' },
+        (payload) => {
+          const updated = payload.new;
+          const rx = typeof updated.reactions === 'string' ? JSON.parse(updated.reactions) : updated.reactions || {};
+          setMessages((prev) =>
+            prev.map((m) => (m.id === updated.id ? { ...m, reactions: rx } : m))
+          );
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'messages' },
+        () => {
+          setMessages([]);
+        }
+      )
+      .subscribe();
+
+    realtimeChannelRef.current = msgChannel;
+
+    // 2. Broadcast Channel for WebRTC Video & Voice Calling Signals
+    const sigChannel = supabase
+      .channel('call_room')
+      .on('broadcast', { event: 'signal' }, ({ payload }) => {
+        if (payload && payload.from_client_id !== clientId && onSignalRef.current) {
+          onSignalRef.current(payload.signal_type, payload.data, payload.from_client_id);
+        }
+      })
+      .subscribe();
+
+    signalChannelRef.current = sigChannel;
+  }, [clientId]);
+
+  // --- LOCAL FASTAPI WEBSOCKET MODE ---
+  const connectFastAPIWs = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) return;
     const wsUrl = getWsUrl(clientId);
 
     try {
@@ -28,24 +105,21 @@ export function useChat(userId, clientId, onSignal) {
       ws.onopen = () => {
         setConnected(true);
         setError(null);
-        reconnectAttemptsRef.current = 0;
-        console.log('[WS] Connected successfully');
       };
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          
           if (data.type === 'chat') {
-            setMessages(prev => {
-              const exists = prev.some(m => m.id === data.id || (data.temp_id && m.temp_id === data.temp_id));
+            setMessages((prev) => {
+              const exists = prev.some((m) => m.id === data.id || (data.temp_id && m.temp_id === data.temp_id));
               if (exists) {
-                return prev.map(m => (m.id === data.id || (data.temp_id && m.temp_id === data.temp_id)) ? data : m);
+                return prev.map((m) => (m.id === data.id || (data.temp_id && m.temp_id === data.temp_id) ? data : m));
               }
               return [...prev, data];
             });
           } else if (data.type === 'reaction') {
-            setMessages(prev => prev.map(m => m.id === data.message_id ? { ...m, reactions: data.reactions } : m));
+            setMessages((prev) => prev.map((m) => (m.id === data.message_id ? { ...m, reactions: data.reactions } : m)));
           } else if (data.type === 'clear_chat') {
             setMessages([]);
           } else if (data.type === 'signal') {
@@ -58,114 +132,99 @@ export function useChat(userId, clientId, onSignal) {
         }
       };
 
-      ws.onclose = () => {
-        setConnected(false);
-        console.log('[WS] Connection closed');
-        
-        if (reconnectAttemptsRef.current < maxReconnectAttempts) {
-          const delay = Math.min(
-            baseReconnectDelay * Math.pow(2, reconnectAttemptsRef.current),
-            30000
-          );
-          reconnectAttemptsRef.current++;
-          console.log(`[WS] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
-          reconnectTimeoutRef.current = setTimeout(connect, delay);
-        } else {
-          setError('Connection lost. Reconnecting...');
-        }
-      };
-
-      ws.onerror = (err) => {
-        console.error('[WS] Error:', err);
-        setError('Connection error');
-      };
+      ws.onclose = () => setConnected(false);
+      ws.onerror = () => setError('Connection error');
     } catch (e) {
-      console.error('[WS] Failed to instantiate WebSocket:', e);
-      setError('Failed to connect');
+      console.error('[WS] Failed to connect:', e);
     }
   }, [clientId]);
-
-  const disconnect = useCallback(() => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-    }
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-    setConnected(false);
-  }, []);
-
-  const sendMessage = useCallback((payload) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(payload));
-    } else {
-      console.warn('[WS] Cannot send message - socket not open');
-    }
-  }, []);
-
-  const sendChatMessage = useCallback((text, mediaUrl = null) => {
-    const tempId = `temp_${Date.now()}_${Math.random()}`;
-    const newMsg = {
-      type: 'chat',
-      sender_id: userId,
-      text_content: text,
-      media_url: mediaUrl,
-      temp_id: tempId,
-    };
-    sendMessage(newMsg);
-  }, [sendMessage, userId]);
-
-  const reactMessage = useCallback((messageId, emoji) => {
-    sendMessage({
-      type: 'reaction',
-      message_id: messageId,
-      user_id: userId,
-      emoji: emoji,
-    });
-  }, [sendMessage, userId]);
-
-  const sendSignal = useCallback((signalType, data) => {
-    sendMessage({
-      type: 'signal',
-      signal_type: signalType,
-      data,
-      sender_id: userId,
-    });
-  }, [sendMessage, userId]);
-
-  const fetchMessages = useCallback(async () => {
-    try {
-      const res = await fetch(`${getApiBaseUrl()}/messages`);
-      if (res.ok) {
-        const data = await res.json();
-        setMessages(data);
-      }
-    } catch (err) {
-      console.error('Failed to fetch messages:', err);
-    }
-  }, []);
 
   useEffect(() => {
     if (userId) {
       fetchMessages();
-      connect();
+      if (isSupabaseConfigured()) {
+        connectSupabaseRealtime();
+      } else {
+        connectFastAPIWs();
+      }
     }
-    return () => disconnect();
-  }, [userId, connect, disconnect, fetchMessages]);
+    return () => {
+      if (realtimeChannelRef.current) supabase.removeChannel(realtimeChannelRef.current);
+      if (signalChannelRef.current) supabase.removeChannel(signalChannelRef.current);
+      if (wsRef.current) wsRef.current.close();
+    };
+  }, [userId, fetchMessages, connectSupabaseRealtime, connectFastAPIWs]);
+
+  // Actions
+  const sendChatMessage = useCallback(
+    async (text, mediaUrl = null) => {
+      if (isSupabaseConfigured()) {
+        await apiSendMessage(userId, text, mediaUrl);
+      } else if (wsRef.current?.readyState === WebSocket.OPEN) {
+        const tempId = `temp_${Date.now()}_${Math.random()}`;
+        wsRef.current.send(
+          JSON.stringify({
+            type: 'chat',
+            sender_id: userId,
+            text_content: text,
+            media_url: mediaUrl,
+            temp_id: tempId,
+          })
+        );
+      }
+    },
+    [userId]
+  );
+
+  const reactMessage = useCallback(
+    async (messageId, emoji) => {
+      if (isSupabaseConfigured()) {
+        await apiReactMessage(messageId, userId, emoji);
+      } else if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: 'reaction',
+            message_id: messageId,
+            user_id: userId,
+            emoji: emoji,
+          })
+        );
+      }
+    },
+    [userId]
+  );
 
   const clearMessages = useCallback(async () => {
-    try {
-      const res = await fetch(`${getApiBaseUrl()}/messages`, {
-        method: 'DELETE',
-      });
-      if (res.ok) {
-        setMessages([]);
-      }
-    } catch (err) {
-      console.error('Failed to clear messages:', err);
-    }
+    await apiClearMessages();
+    setMessages([]);
   }, []);
+
+  const sendSignal = useCallback(
+    (signalType, data) => {
+      if (isSupabaseConfigured() && signalChannelRef.current) {
+        signalChannelRef.current.send({
+          type: 'broadcast',
+          event: 'signal',
+          payload: {
+            signal_type: signalType,
+            data,
+            from_client_id: clientId,
+            sender_id: userId,
+          },
+        });
+      } else if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: 'signal',
+            signal_type: signalType,
+            data,
+            sender_id: userId,
+          })
+        );
+      }
+    },
+    [clientId, userId]
+  );
 
   return {
     messages,
@@ -175,8 +234,6 @@ export function useChat(userId, clientId, onSignal) {
     reactMessage,
     sendSignal,
     clearMessages,
-    connect,
-    disconnect,
     refetchMessages: fetchMessages,
   };
 }

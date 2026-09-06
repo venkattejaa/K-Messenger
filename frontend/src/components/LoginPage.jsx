@@ -1,6 +1,6 @@
-import { useState, useRef } from 'react';
 import { LogIn, Loader2, ShieldCheck, Lock, Eye, EyeOff, Sparkles, MessageCircleCode, UserPlus, Camera, Mail, KeyRound, ArrowLeft, RefreshCw } from 'lucide-react';
-import { getApiBaseUrl } from '../config';
+import { apiLogin, apiSendOtp, apiRegister, apiUploadFile } from '../services/supabaseService';
+import SupabaseSetupBanner from './SupabaseSetupBanner';
 
 export default function LoginPage({ onLogin }) {
   const [activeTab, setActiveTab] = useState('register'); // 'register' or 'login'
@@ -37,16 +37,9 @@ export default function LoginPage({ onLogin }) {
     setUploadingAvatar(true);
     setError('');
 
-    const formData = new FormData();
-    formData.append('file', file);
-
     try {
-      const res = await fetch(`${getApiBaseUrl()}/upload`, {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json();
-      if (res.ok && data.media_url) {
+      const data = await apiUploadFile(file);
+      if (data.media_url) {
         setRegAvatarUrl(data.media_url);
       } else {
         throw new Error('Avatar upload failed');
@@ -64,18 +57,7 @@ export default function LoginPage({ onLogin }) {
     setLoading(true);
 
     try {
-      const res = await fetch(`${getApiBaseUrl()}/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, passcode }),
-      });
-
-      const data = await res.json();
-      
-      if (!res.ok) {
-        throw new Error(data.detail || 'Invalid username or passcode');
-      }
-
+      const data = await apiLogin(username, passcode);
       onLogin(data.user_id, data.username, data.display_name, data.avatar_url, data.bio);
     } catch (err) {
       setError(err.message);
@@ -101,19 +83,12 @@ export default function LoginPage({ onLogin }) {
     setSendingOtp(true);
 
     try {
-      const res = await fetch(`${getApiBaseUrl()}/send-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: regEmail.trim() }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.detail || 'Failed to send verification email');
+      const data = await apiSendOtp(regEmail.trim());
+      let msg = data.message || `Verification code sent to ${regEmail}`;
+      if (data.dev_otp) {
+        msg += ` (Code: ${data.dev_otp})`;
       }
-
-      setOtpSentMsg(data.message || `Verification code sent to ${regEmail}`);
+      setOtpSentMsg(msg);
       setOtpStep('verify');
     } catch (err) {
       setError(err.message);
@@ -135,25 +110,15 @@ export default function LoginPage({ onLogin }) {
 
     try {
       const finalPasscode = regPasscode.trim() || '1234';
-      const res = await fetch(`${getApiBaseUrl()}/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: regUsername.trim(),
-          email: regEmail.trim(),
-          otp: regOtp.trim(),
-          passcode: finalPasscode,
-          display_name: regDisplayName.trim() || regUsername.trim(),
-          bio: regBio.trim() || 'Available for chat ✨',
-          avatar_url: regAvatarUrl,
-        }),
+      const data = await apiRegister({
+        username: regUsername.trim(),
+        email: regEmail.trim(),
+        otp: regOtp.trim(),
+        passcode: finalPasscode,
+        display_name: regDisplayName.trim() || regUsername.trim(),
+        bio: regBio.trim() || 'Available for chat ✨',
+        avatar_url: regAvatarUrl,
       });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.detail || 'Registration failed');
-      }
 
       // Auto-login upon registration
       onLogin(data.user_id, data.username, data.display_name, data.avatar_url, data.bio);
@@ -166,6 +131,7 @@ export default function LoginPage({ onLogin }) {
 
   return (
     <div className="relative min-h-[100dvh] w-full bg-[#0B0F17] flex flex-col items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <SupabaseSetupBanner />
       {/* Ambient background glowing orbs */}
       <div className="absolute top-1/4 left-1/3 w-80 h-80 sm:w-96 sm:h-96 bg-indigo-600/20 rounded-full blur-[120px] pointer-events-none animate-pulse-slow" />
       <div className="absolute bottom-1/4 right-1/3 w-80 h-80 sm:w-96 sm:h-96 bg-purple-600/20 rounded-full blur-[120px] pointer-events-none animate-pulse-slow" style={{ animationDelay: '3s' }} />

@@ -6,7 +6,7 @@ import MemoryLane from './components/MemoryLane';
 import VideoCallOverlay from './components/VideoCallOverlay';
 import LoginPage from './components/LoginPage';
 import ProfileModal from './components/ProfileModal';
-import { getApiBaseUrl } from './config';
+import { apiGetUsers } from './services/supabaseService';
 
 function App() {
   const [loggedIn, setLoggedIn] = useState(false);
@@ -28,11 +28,8 @@ function App() {
 
   const fetchAllUsers = useCallback(async () => {
     try {
-      const res = await fetch(`${getApiBaseUrl()}/users`);
-      if (res.ok) {
-        const data = await res.json();
-        setAllUsers(data);
-      }
+      const data = await apiGetUsers();
+      setAllUsers(data);
     } catch (err) {
       console.error('Failed to fetch users:', err);
     }

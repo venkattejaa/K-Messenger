@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { X, Camera, User, Check, Loader2, Sparkles, Lock, Edit3 } from 'lucide-react';
-import { getApiBaseUrl } from '../config';
+import { apiUpdateProfile, apiUploadFile } from '../services/supabaseService';
 
 export default function ProfileModal({ userProfile, onUpdateProfile, onClose }) {
   const [username, setUsername] = useState(userProfile.username || '');
@@ -22,16 +22,9 @@ export default function ProfileModal({ userProfile, onUpdateProfile, onClose }) 
     setUploadingAvatar(true);
     setErrorMsg('');
 
-    const formData = new FormData();
-    formData.append('file', file);
-
     try {
-      const res = await fetch(`${getApiBaseUrl()}/upload`, {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json();
-      if (res.ok && data.media_url) {
+      const data = await apiUploadFile(file);
+      if (data.media_url) {
         setAvatarUrl(data.media_url);
       } else {
         throw new Error('Avatar upload failed');
@@ -55,24 +48,14 @@ export default function ProfileModal({ userProfile, onUpdateProfile, onClose }) 
     setSuccessMsg('');
 
     try {
-      const res = await fetch(`${getApiBaseUrl()}/profile`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: userProfile.user_id,
-          username: username.trim(),
-          display_name: displayName.trim(),
-          bio: bio.trim(),
-          avatar_url: avatarUrl,
-          passcode: passcode.trim() || undefined,
-        }),
+      const data = await apiUpdateProfile({
+        user_id: userProfile.user_id,
+        username: username.trim(),
+        display_name: displayName.trim(),
+        bio: bio.trim(),
+        avatar_url: avatarUrl,
+        passcode: passcode.trim() || undefined,
       });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.detail || 'Failed to update profile');
-      }
 
       setSuccessMsg('Profile updated successfully!');
       onUpdateProfile(data);

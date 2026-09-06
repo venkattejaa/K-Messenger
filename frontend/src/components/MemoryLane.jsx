@@ -1,6 +1,6 @@
 import { Image as ImageIcon, Loader2, X, Maximize2, Sparkles, Download, Calendar, Search, Layers } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
-import { getApiBaseUrl } from '../config';
+import { apiGetMessages } from '../services/supabaseService';
 
 export default function MemoryLane({ currentUserId }) {
   const [images, setImages] = useState([]);
@@ -10,9 +10,10 @@ export default function MemoryLane({ currentUserId }) {
 
   const fetchGallery = useCallback(async () => {
     try {
-      const res = await fetch(`${getApiBaseUrl()}/gallery`);
-      const data = await res.json();
-      setImages(data);
+      const allMsgs = await apiGetMessages();
+      const mediaMsgs = allMsgs.filter(m => Boolean(m.media_url));
+      mediaMsgs.reverse(); // Newest first
+      setImages(mediaMsgs);
     } catch (err) {
       console.error('Failed to fetch gallery:', err);
     } finally {
