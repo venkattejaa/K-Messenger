@@ -315,7 +315,6 @@ export const apiGetMessages = async (userId = null, partnerId = null) => {
     let query = supabase
       .from('messages')
       .select('*')
-      .not('text_content', 'like', 'USER_SETTING:%')
       .order('timestamp', { ascending: true })
       .limit(500);
 
@@ -328,7 +327,11 @@ export const apiGetMessages = async (userId = null, partnerId = null) => {
     const { data, error } = await query;
 
     if (error || !data) return [];
-    return data.map((m) => ({
+    
+    // Safely filter internal system settings in JS so NULL text_content media messages are not dropped by SQL
+    const validData = data.filter((m) => !m.text_content || !m.text_content.startsWith('USER_SETTING:'));
+
+    return validData.map((m) => ({
       id: m.id,
       sender_id: m.sender_id,
       text_content: m.text_content,
@@ -482,7 +485,7 @@ export const apiClearMessages = async (userId = null, partnerId = null) => {
       .from('messages')
       .delete()
       .in('sender_id', [userId, partnerId])
-      .not('text_content', 'like', 'USER_SETTING:%');
+      .or('text_content.is.null,text_content.not.like.USER_SETTING:%');
     if (error) {
       console.error('Failed to clear messages:', error);
     }
