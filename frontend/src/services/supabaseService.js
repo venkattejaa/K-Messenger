@@ -4,14 +4,30 @@ import { getApiBaseUrl } from '../config';
 // 1. User Login
 export const apiLogin = async (username, passcode) => {
   if (isSupabaseConfigured()) {
-    const { data, error } = await supabase
+    const cleanUname = username.trim();
+    const cleanPass = passcode.trim();
+
+    // 1. Try case-insensitive match on username
+    let { data, error } = await supabase
       .from('users')
       .select('*')
-      .eq('username', username.trim())
-      .eq('passcode', passcode.trim())
-      .single();
+      .ilike('username', cleanUname)
+      .eq('passcode', cleanPass)
+      .maybeSingle();
 
-    if (error || !data) {
+    // 2. Alias fallback: If username typed is Chinni_is_buzy, srevarsha, or Srevarsha for user ID 2
+    if (!data && (cleanUname.toLowerCase() === 'chinni_is_buzy' || cleanUname.toLowerCase() === 'srevarsha')) {
+      const { data: user2 } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', 2)
+        .eq('passcode', cleanPass)
+        .maybeSingle();
+
+      if (user2) data = user2;
+    }
+
+    if (!data) {
       throw new Error('Invalid credentials');
     }
 
@@ -255,14 +271,33 @@ export const apiUpdateProfile = async (profileData) => {
   return await res.json();
 };
 
-// 6. Fetch Messages History
-export const apiGetMessages = async () => {
+const USER_PAIR_MAP = {
+  1: 2, // venkattejaa -> srevarsha
+  2: 1, // srevarsha -> venkattejaa
+  3: 4, // tester1 -> tester2
+  4: 3, // tester2 -> tester1
+};
+
+// 6. Fetch Messages History (Isolated per conversation pair)
+export const apiGetMessages = async (userId = null, partnerId = null) => {
   if (isSupabaseConfigured()) {
-    const { data, error } = await supabase
+    const effectiveUserId = userId ? Number(userId) : null;
+    const effectivePartnerId = partnerId ? Number(partnerId) : (effectiveUserId ? USER_PAIR_MAP[effectiveUserId] : null);
+
+    let query = supabase
       .from('messages')
       .select('*')
+      .not('text_content', 'like', 'USER_SETTING:%')
       .order('timestamp', { ascending: true })
-      .limit(200);
+      .limit(500);
+
+    if (effectiveUserId && effectivePartnerId) {
+      query = query.in('sender_id', [effectiveUserId, effectivePartnerId]);
+    } else if (effectiveUserId) {
+      query = query.or(`sender_id.eq.${effectiveUserId}`);
+    }
+
+    const { data, error } = await query;
 
     if (error || !data) return [];
     return data.map((m) => ({
@@ -286,13 +321,13 @@ export const apiGetMessages = async () => {
 };
 
 // 7. Send Message
-export const apiSendMessage = async (sender_id, text_content, media_url = null) => {
+export const apiSendMessage = async (sender_id, text_content, media_url = null, initialReactions = {}) => {
   if (isSupabaseConfigured()) {
     const newMsg = {
       sender_id,
       text_content: text_content || null,
       media_url: media_url || null,
-      reactions: {},
+      reactions: initialReactions || {},
     };
 
     const { data, error } = await supabase
@@ -359,10 +394,67 @@ export const apiReactMessage = async (message_id, user_id, emoji) => {
   return null;
 };
 
-// 9. Clear All Messages
-export const apiClearMessages = async () => {
+// Mark Single Message as Seen
+export const apiMarkSeen = async (message_id, user_id) => {
   if (isSupabaseConfigured()) {
-    const { error } = await supabase.from('messages').delete().neq('id', -1);
+    const { data: msg } = await supabase
+      .from('messages')
+      .select('reactions')
+      .eq('id', message_id)
+      .single();
+
+    let rx = msg && msg.reactions ? (typeof msg.reactions === 'string' ? JSON.parse(msg.reactions) : { ...msg.reactions }) : {};
+    const userStr = String(user_id);
+    if (!rx._seen) rx._seen = {};
+
+    if (!rx._seen[userStr]) {
+      rx._seen[userStr] = new Date().toISOString();
+      await supabase
+        .from('messages')
+        .update({ reactions: rx })
+        .eq('id', message_id);
+    }
+    return rx;
+  }
+  return null;
+};
+
+// Batch Mark Unread Partner Messages as Seen
+export const apiMarkAllSeen = async (partnerSenderId, myUserId) => {
+  if (isSupabaseConfigured() && partnerSenderId && myUserId) {
+    const { data: partnerMsgs } = await supabase
+      .from('messages')
+      .select('id, reactions')
+      .eq('sender_id', partnerSenderId);
+
+    if (!partnerMsgs || partnerMsgs.length === 0) return;
+
+    const myUserStr = String(myUserId);
+    const nowIso = new Date().toISOString();
+
+    for (const msg of partnerMsgs) {
+      let rx = msg.reactions ? (typeof msg.reactions === 'string' ? JSON.parse(msg.reactions) : { ...msg.reactions }) : {};
+      if (!rx._seen) rx._seen = {};
+      if (!rx._seen[myUserStr]) {
+        rx._seen[myUserStr] = nowIso;
+        await supabase
+          .from('messages')
+          .update({ reactions: rx })
+          .eq('id', msg.id);
+      }
+    }
+  }
+};
+
+// 9. Clear Messages for current conversation pair only
+export const apiClearMessages = async (userId = null, partnerId = null) => {
+  if (isSupabaseConfigured()) {
+    if (!userId || !partnerId) return { status: 'failed' };
+    const { error } = await supabase
+      .from('messages')
+      .delete()
+      .in('sender_id', [userId, partnerId])
+      .not('text_content', 'like', 'USER_SETTING:%');
     if (error) {
       console.error('Failed to clear messages:', error);
     }
@@ -404,6 +496,83 @@ export const apiUploadFile = async (file) => {
     method: 'POST',
     body: formData,
   });
-  if (!res.ok) throw new Error('Upload failed');
+  if (!res.ok) {
+    throw new Error('Upload failed');
+  }
   return await res.json();
 };
+
+// 11. Mute Setting Persistence (Syncs across all devices & logins)
+export const apiGetMuteSetting = async (userId) => {
+  if (isSupabaseConfigured() && userId) {
+    const { data } = await supabase
+      .from('messages')
+      .select('text_content')
+      .eq('sender_id', userId)
+      .like('text_content', 'USER_SETTING:MUTE:%')
+      .order('timestamp', { ascending: false })
+      .limit(1);
+
+    if (data && data.length > 0) {
+      return data[0].text_content === 'USER_SETTING:MUTE:true';
+    }
+  }
+  return null;
+};
+
+export const apiSaveMuteSetting = async (userId, isMuted) => {
+  if (isSupabaseConfigured() && userId) {
+    await supabase.from('messages').insert([
+      {
+        sender_id: userId,
+        text_content: `USER_SETTING:MUTE:${isMuted}`,
+        timestamp: new Date().toISOString(),
+      },
+    ]);
+  }
+};
+
+// 11. Unsend Message (Delete for everyone)
+export const apiUnsendMessage = async (message_id) => {
+  if (isSupabaseConfigured()) {
+    const { error } = await supabase.from('messages').delete().eq('id', message_id);
+    if (error) {
+      console.error('Failed to unsend message:', error);
+    }
+    return { status: 'success' };
+  }
+  try {
+    const res = await fetch(`${getApiBaseUrl()}/messages/${message_id}`, { method: 'DELETE' });
+    if (res.ok) return await res.json();
+  } catch (e) {
+    console.error('Local unsend failed:', e);
+  }
+  return { status: 'failed' };
+};
+
+// 12. Edit Message Text
+export const apiEditMessage = async (message_id, new_text) => {
+  if (isSupabaseConfigured()) {
+    const { error } = await supabase
+      .from('messages')
+      .update({ text_content: new_text.trim() })
+      .eq('id', message_id);
+
+    if (error) {
+      console.error('Failed to edit message:', error);
+    }
+    return { status: 'success' };
+  }
+  try {
+    const res = await fetch(`${getApiBaseUrl()}/messages/${message_id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text_content: new_text }),
+    });
+    if (res.ok) return await res.json();
+  } catch (e) {
+    console.error('Local edit failed:', e);
+  }
+  return { status: 'failed' };
+};
+

@@ -1,9 +1,121 @@
-import { MessageSquare, Image, Video, Phone, Send, Loader2, ShieldCheck, User, CheckCheck, Paperclip, Settings, Layers, Heart, Smile, Sparkles, Info, Edit3, Volume2, VolumeX } from 'lucide-react';
+import {
+  MessageSquare, Image, Video, Phone, Send, Loader2, ShieldCheck, User,
+  CheckCheck, Paperclip, Settings, Layers, Heart, Smile, Sparkles, Info,
+  Edit3, Volume2, VolumeX, Mic, Square, Play, Pause, Trash2, Check, X, MoreVertical, Copy, Reply
+} from 'lucide-react';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import NicknameModal from './NicknameModal';
 import { playNotificationSound } from '../utils/notificationSound';
+import { sendBrowserNotification } from '../utils/browserNotifications';
+import { apiGetMuteSetting, apiSaveMuteSetting } from '../services/supabaseService';
 
 const QUICK_EMOJIS = ['❤️', '👍', '😂', '😮', '😢', '🔥'];
+
+function formatSeenAgo(seenIso) {
+  if (!seenIso) return null;
+  const seenTime = new Date(seenIso).getTime();
+  if (isNaN(seenTime)) return null;
+  const now = Date.now();
+  const diffSec = Math.floor((now - seenTime) / 1000);
+  if (diffSec < 45) return 'Seen just now';
+  if (diffSec < 3600) return `Seen ${Math.floor(diffSec / 60)}m ago`;
+  const d = new Date(seenIso);
+  return `Seen ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+function AudioPlayerBubble({ src, isMe }) {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const audioRef = useRef(null);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioRef.current.play().catch((e) => console.error('Audio playback error:', e));
+      setIsPlaying(true);
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    if (!audioRef.current) return;
+    const cur = audioRef.current.currentTime;
+    const dur = audioRef.current.duration || 1;
+    setCurrentTime(cur);
+    setProgress((cur / dur) * 100);
+  };
+
+  const handleLoadedMetadata = () => {
+    if (audioRef.current) {
+      setDuration(audioRef.current.duration || 0);
+    }
+  };
+
+  const handleEnded = () => {
+    setIsPlaying(false);
+    setProgress(0);
+    setCurrentTime(0);
+  };
+
+  const formatSeconds = (sec) => {
+    if (isNaN(sec) || !isFinite(sec)) return '0:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  return (
+    <div className="flex items-center gap-3 py-1 px-1 min-w-[200px] sm:min-w-[240px]">
+      <audio
+        ref={audioRef}
+        src={src}
+        onTimeUpdate={handleTimeUpdate}
+        onLoadedMetadata={handleLoadedMetadata}
+        onEnded={handleEnded}
+        preload="metadata"
+      />
+      <button
+        type="button"
+        onClick={togglePlay}
+        className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-transform active:scale-95 shadow-md ${
+          isMe
+            ? 'bg-white text-purple-600 hover:bg-slate-100'
+            : 'bg-purple-600 text-white hover:bg-purple-500'
+        }`}
+      >
+        {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
+      </button>
+
+      <div className="flex-1 flex flex-col gap-1">
+        {/* Visualizer Waveform Bar */}
+        <div className="flex items-center gap-0.5 h-6">
+          {[40, 70, 30, 90, 50, 80, 100, 40, 60, 85, 45, 75, 35, 95, 60, 40, 80, 50].map((h, i) => {
+            const active = (i / 18) * 100 <= progress;
+            return (
+              <div
+                key={i}
+                style={{ height: `${h}%` }}
+                className={`w-1 rounded-full transition-colors ${
+                  active
+                    ? isMe ? 'bg-white' : 'bg-purple-400'
+                    : isMe ? 'bg-white/30' : 'bg-slate-700'
+                }`}
+              />
+            );
+          })}
+        </div>
+        <div className={`flex justify-between text-[10px] font-semibold ${isMe ? 'text-pink-100/90' : 'text-slate-400'}`}>
+          <span>{formatSeconds(currentTime)}</span>
+          <span>{duration ? formatSeconds(duration) : 'Voice note'}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function ChatPanel({
   messages,
@@ -16,6 +128,7 @@ export default function ChatPanel({
   connected,
   userProfile,
   partnerUser,
+  onlineUserIds = [],
   onOpenProfile,
   mobileActiveTab,
   onSelectMobileTab,
@@ -23,24 +136,149 @@ export default function ChatPanel({
   onSaveNickname,
   onReactMessage,
   onClearChat,
+  onUnsendMessage,
+  onEditMessage,
+  onMarkAllSeen,
+  onToggleMemoryLane,
+  showMemoryLane,
 }) {
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const prevMessagesLengthRef = useRef(messages.length);
+  const isInitialLoadRef = useRef(true);
   const [newMessage, setNewMessage] = useState('');
   const [lightboxImage, setLightboxImage] = useState(null);
-  const [activeReactionMsgId, setActiveReactionMsgId] = useState(null);
   const [isNicknameModalOpen, setIsNicknameModalOpen] = useState(false);
 
-  // Mute Notifications State (persisted in localStorage)
+  // Voice Note Recording State
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const recordingTimerRef = useRef(null);
+
+  // Inline Message Editing, Reply & Actions State
+  const [editingMsgId, setEditingMsgId] = useState(null);
+  const [editingText, setEditingText] = useState('');
+  const [activeActionMsgId, setActiveActionMsgId] = useState(null);
+  const [copiedMsgId, setCopiedMsgId] = useState(null);
+  const [replyingToMsg, setReplyingToMsg] = useState(null);
+  const [highlightedMsgId, setHighlightedMsgId] = useState(null);
+  const inputRef = useRef(null);
+
+  const handleStartReply = (msg) => {
+    setReplyingToMsg(msg);
+    setActiveActionMsgId(null);
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+  };
+
+  const handleJumpToMessage = (msgId) => {
+    if (!msgId) return;
+    const el = document.getElementById(`msg-${msgId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightedMsgId(msgId);
+      setTimeout(() => setHighlightedMsgId(null), 2200);
+    }
+  };
+
+  const handleCopyText = (msg) => {
+    const text = msg.text_content || msg.media_url || '';
+    if (text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch((err) => {
+          console.error('Failed to copy text:', err);
+        });
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        document.body.appendChild(textArea);
+        textArea.select();
+        try {
+          document.execCommand('copy');
+        } catch (e) {
+          console.error('Fallback copy failed:', e);
+        }
+        document.body.removeChild(textArea);
+      }
+      setCopiedMsgId(msg.id || msg.temp_id || 'copied');
+      setTimeout(() => {
+        setCopiedMsgId(null);
+      }, 2000);
+    }
+    setActiveActionMsgId(null);
+  };
+
+  // Touch Long-press & Popover Placement
+  const [popoverPlacement, setPopoverPlacement] = useState('up'); // 'up' | 'down'
+  const touchTimerRef = useRef(null);
+
+  const toggleActionMenu = (msgId, eOrTarget) => {
+    if (eOrTarget && eOrTarget.stopPropagation) eOrTarget.stopPropagation();
+    if (activeActionMsgId === msgId) {
+      setActiveActionMsgId(null);
+      return;
+    }
+    let placement = 'up';
+    const target = eOrTarget?.currentTarget || eOrTarget?.target || eOrTarget;
+    if (target && target.getBoundingClientRect) {
+      const rect = target.getBoundingClientRect();
+      if (rect.top < window.innerHeight * 0.48) {
+        placement = 'down';
+      }
+    }
+    setPopoverPlacement(placement);
+    setActiveActionMsgId(msgId);
+  };
+
+  const handleTouchStart = (msgId, e) => {
+    const target = e?.currentTarget;
+    touchTimerRef.current = setTimeout(() => {
+      toggleActionMenu(msgId, target);
+      if ('vibrate' in navigator) {
+        try { navigator.vibrate(40); } catch(err) {}
+      }
+    }, 380);
+  };
+
+  const handleTouchEndOrMove = () => {
+    if (touchTimerRef.current) {
+      clearTimeout(touchTimerRef.current);
+      touchTimerRef.current = null;
+    }
+  };
+
+  // Mute Notifications State (Synced with Supabase & LocalStorage per User ID)
   const [isMuted, setIsMuted] = useState(() => {
-    return localStorage.getItem('kmessenger_muted_notifications') === 'true';
+    if (!currentUserId) return localStorage.getItem('kmessenger_muted_notifications') === 'true';
+    const stored = localStorage.getItem(`kmessenger_muted_${currentUserId}`);
+    return stored !== null ? stored === 'true' : localStorage.getItem('kmessenger_muted_notifications') === 'true';
   });
+
+  // Fetch persistent mute setting from Supabase when logged in
+  useEffect(() => {
+    if (!currentUserId) return;
+    apiGetMuteSetting(currentUserId)
+      .then((dbMuted) => {
+        if (dbMuted !== null) {
+          setIsMuted(dbMuted);
+          localStorage.setItem(`kmessenger_muted_${currentUserId}`, String(dbMuted));
+          localStorage.setItem('kmessenger_muted_notifications', String(dbMuted));
+        }
+      })
+      .catch((err) => console.error('Failed to sync mute setting:', err));
+  }, [currentUserId]);
 
   const toggleMuteNotifications = () => {
     setIsMuted((prev) => {
       const next = !prev;
-      localStorage.setItem('kmessenger_muted_notifications', String(next));
+      if (currentUserId) {
+        localStorage.setItem(`kmessenger_muted_${currentUserId}`, String(next));
+        localStorage.setItem('kmessenger_muted_notifications', String(next));
+        apiSaveMuteSetting(currentUserId, next).catch((err) => console.error('Failed to save mute setting:', err));
+      }
       return next;
     });
   };
@@ -53,22 +291,196 @@ export default function ChatPanel({
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  // Trigger sound chime when partner sends a new message (if not muted)
+  // Close active action popup on outside click/tap
   useEffect(() => {
+    const handleOutsideClick = () => {
+      setActiveActionMsgId(null);
+    };
+    window.addEventListener('click', handleOutsideClick);
+    return () => window.removeEventListener('click', handleOutsideClick);
+  }, []);
+
+  // Mark unread messages as seen whenever app is active and visible on mobile & desktop
+  useEffect(() => {
+    const handleCheckVisibilityAndMarkSeen = () => {
+      if (document.visibilityState === 'visible' && onMarkAllSeen) {
+        onMarkAllSeen();
+      }
+    };
+
+    handleCheckVisibilityAndMarkSeen();
+
+    window.addEventListener('focus', handleCheckVisibilityAndMarkSeen);
+    document.addEventListener('visibilitychange', handleCheckVisibilityAndMarkSeen);
+    window.addEventListener('touchstart', handleCheckVisibilityAndMarkSeen, { passive: true });
+
+    return () => {
+      window.removeEventListener('focus', handleCheckVisibilityAndMarkSeen);
+      document.removeEventListener('visibilitychange', handleCheckVisibilityAndMarkSeen);
+      window.removeEventListener('touchstart', handleCheckVisibilityAndMarkSeen);
+    };
+  }, [onMarkAllSeen, messages]);
+
+  // Sound Chime & Browser Notification on incoming messages (ignores initial page load/refresh)
+  useEffect(() => {
+    if (isInitialLoadRef.current) {
+      if (messages.length > 0) {
+        isInitialLoadRef.current = false;
+      }
+      prevMessagesLengthRef.current = messages.length;
+      return;
+    }
+
     if (messages.length > prevMessagesLengthRef.current) {
       const lastMsg = messages[messages.length - 1];
       if (lastMsg && lastMsg.sender_id !== currentUserId && !isMuted) {
+        // Skip text notification chime for call signaling/records
+        if (lastMsg.text_content && (lastMsg.text_content.startsWith('CALL_SIGNAL:') || lastMsg.text_content.startsWith('CALL_RECORD:'))) {
+          prevMessagesLengthRef.current = messages.length;
+          return;
+        }
+
         playNotificationSound();
+        const senderName = customNickname || partnerUser?.display_name || partnerUser?.username || defaultPartnerName;
+        
+        let bodyText = lastMsg.text_content || 'Sent an attachment';
+        if (lastMsg.media_url && isAudioMedia(lastMsg.media_url)) {
+          bodyText = '🎤 Sent a voice note';
+        } else if (lastMsg.media_url) {
+          bodyText = '📷 Sent a photo';
+        }
+
+        const replyMeta = lastMsg.reactions?._reply;
+        if (replyMeta) {
+          bodyText = `↩️ Replying: ${bodyText}`;
+        }
+
+        sendBrowserNotification(senderName, {
+          body: bodyText,
+          icon: partnerUser?.avatar_url || '/app_icon.png',
+          image: lastMsg.media_url && !isAudioMedia(lastMsg.media_url) ? lastMsg.media_url : null,
+          tag: `kmessenger_msg_${lastMsg.id || Date.now()}`,
+        });
       }
     }
     prevMessagesLengthRef.current = messages.length;
-  }, [messages, currentUserId, isMuted]);
+  }, [messages, currentUserId, isMuted, partnerUser, customNickname, defaultPartnerName]);
+
+  // Voice Recorder Methods
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.start(200);
+      setIsRecording(true);
+      setRecordingTime(0);
+
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error('Failed to access microphone:', err);
+      alert('Microphone access is required to record voice notes.');
+    }
+  };
+
+  const stopAndSendRecording = () => {
+    if (!mediaRecorderRef.current) return;
+    clearInterval(recordingTimerRef.current);
+    const mediaRecorder = mediaRecorderRef.current;
+
+    mediaRecorder.onstop = async () => {
+      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+      mediaRecorder.stream.getTracks().forEach((track) => track.stop());
+
+      if (audioBlob.size > 0) {
+        const audioFile = new File([audioBlob], `voicenote_${Date.now()}.webm`, { type: 'audio/webm' });
+        onUpload(audioFile);
+      }
+      setIsRecording(false);
+      setRecordingTime(0);
+    };
+
+    mediaRecorder.stop();
+  };
+
+  const cancelRecording = () => {
+    if (!mediaRecorderRef.current) return;
+    clearInterval(recordingTimerRef.current);
+    const mediaRecorder = mediaRecorderRef.current;
+
+    mediaRecorder.onstop = () => {
+      mediaRecorder.stream.getTracks().forEach((track) => track.stop());
+      audioChunksRef.current = [];
+      setIsRecording(false);
+      setRecordingTime(0);
+    };
+
+    mediaRecorder.stop();
+  };
+
+  const formatRecordingTime = (sec) => {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  // Message Editing Handlers
+  const handleStartEdit = (msg) => {
+    setEditingMsgId(msg.id);
+    setEditingText(msg.text_content || '');
+  };
+
+  const handleSaveEdit = (msgId) => {
+    if (editingText.trim() && onEditMessage) {
+      onEditMessage(msgId, editingText.trim());
+    }
+    setEditingMsgId(null);
+    setEditingText('');
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMsgId(null);
+    setEditingText('');
+  };
 
   const handleSend = (e) => {
     if (e) e.preventDefault();
-    if (!newMessage.trim() && !uploading) return;
-    onSendMessage(newMessage.trim());
+    if ((!newMessage.trim() && !uploading) || isRecording) return;
+
+    let initialReactions = {};
+    if (replyingToMsg) {
+      const replySenderName =
+        replyingToMsg.sender_id === currentUserId
+          ? 'You'
+          : customNickname || partnerUser?.display_name || partnerUser?.username || defaultPartnerName;
+
+      let previewText = replyingToMsg.text_content || '';
+      if (!previewText && replyingToMsg.media_url) {
+        previewText = isAudioMedia(replyingToMsg.media_url) ? '🎤 Voice note' : '📷 Photo';
+      }
+
+      initialReactions._reply = {
+        id: replyingToMsg.id || replyingToMsg.temp_id,
+        sender_id: replyingToMsg.sender_id,
+        sender_name: replySenderName,
+        text: previewText.length > 80 ? previewText.substring(0, 80) + '...' : previewText,
+        media_url: replyingToMsg.media_url || null,
+      };
+    }
+
+    onSendMessage(newMessage.trim(), null, initialReactions);
     setNewMessage('');
+    setReplyingToMsg(null);
   };
 
   const handleSendQuickHeart = () => {
@@ -94,9 +506,37 @@ export default function ChatPanel({
     }
   };
 
+  const isAudioMedia = (url) => {
+    if (!url) return false;
+    const l = url.toLowerCase();
+    return (
+      l.endsWith('.webm') ||
+      l.endsWith('.mp3') ||
+      l.endsWith('.wav') ||
+      l.endsWith('.m4a') ||
+      l.endsWith('.ogg') ||
+      l.includes('voicenote') ||
+      l.includes('audio')
+    );
+  };
+
+  const defaultPartnerName =
+    currentUserId === 1 || username?.toLowerCase() === 'venkattejaa'
+      ? 'Srevarsha'
+      : currentUserId === 2 || username?.toLowerCase() === 'srevarsha' || username?.toLowerCase() === 'chinni_is_buzy'
+      ? 'Venkat Teja'
+      : currentUserId === 3 || username?.toLowerCase() === 'tester1'
+      ? 'Tester 2'
+      : currentUserId === 4 || username?.toLowerCase() === 'tester2'
+      ? 'Tester 1'
+      : 'Contact';
+
   const myDisplayName = userProfile?.display_name || username || 'You';
-  const partnerOriginalName = partnerUser?.display_name || partnerUser?.username || 'Partner';
+  const partnerOriginalName = partnerUser?.display_name || partnerUser?.username || defaultPartnerName;
   const partnerDisplayName = customNickname || partnerOriginalName;
+
+  const partnerIdNum = partnerUser?.user_id || (currentUserId === 1 ? 2 : currentUserId === 2 ? 1 : currentUserId === 3 ? 4 : currentUserId === 4 ? 3 : null);
+  const isPartnerOnline = partnerIdNum && onlineUserIds.includes(String(partnerIdNum));
 
   return (
     <div className="flex flex-col h-full bg-[#0B0F17] relative overflow-hidden font-sans">
@@ -104,125 +544,141 @@ export default function ChatPanel({
       <div className="absolute top-1/4 right-1/4 w-96 h-96 bg-pink-900/10 rounded-full blur-[140px] pointer-events-none" />
       <div className="absolute bottom-1/3 left-1/4 w-96 h-96 bg-purple-900/10 rounded-full blur-[140px] pointer-events-none" />
 
-      {/* Top Header - Instagram DM Style */}
-      <div className="flex items-center justify-between p-3.5 px-4 sm:px-6 border-b border-[#262626] bg-[#121212]/90 backdrop-blur-xl relative z-10">
-        {/* Left: Partner Profile Info */}
-        <div className="flex items-center gap-3">
-          {/* Partner Avatar with Instagram Story Ring */}
+      {/* Top Header - Instagram DM Style with Permanent K-Messenger Brand Logo */}
+      <div className="flex items-center justify-between p-3 sm:p-3.5 px-3 sm:px-6 border-b border-[#262626] bg-[#121212]/90 backdrop-blur-xl relative z-10">
+        
+        {/* Left: K-Messenger Brand Logo + Partner Info */}
+        <div className="flex items-center gap-2.5 sm:gap-3.5">
+          {/* Permanent K-Messenger Brand Badge */}
+          <div className="flex items-center gap-2 pr-2.5 border-r border-slate-800">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-pink-500 via-purple-600 to-indigo-600 p-[1.5px] flex items-center justify-center shadow-lg shadow-purple-500/20 flex-shrink-0">
+              <img src="/app_icon.png" alt="K-Messenger Logo" className="w-full h-full object-cover rounded-[10px]" />
+            </div>
+            <span className="hidden sm:inline text-xs font-black tracking-wider bg-gradient-to-r from-pink-400 via-purple-300 to-indigo-300 bg-clip-text text-transparent uppercase">
+              K-Messenger
+            </span>
+          </div>
+
+          {/* Partner Avatar with Story Ring */}
           <div className="relative group cursor-pointer" onClick={() => setIsNicknameModalOpen(true)}>
-            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-full p-[2px] bg-gradient-to-tr from-yellow-500 via-red-500 to-purple-600 shadow-md">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full p-[2px] bg-gradient-to-tr from-yellow-500 via-red-500 to-purple-600 shadow-md">
               <div className="w-full h-full rounded-full bg-slate-900 overflow-hidden flex items-center justify-center border-2 border-[#121212]">
                 {partnerUser?.avatar_url ? (
                   <img src={partnerUser.avatar_url} alt="Partner" className="w-full h-full object-cover rounded-full" />
                 ) : (
-                  <span className="text-sm font-bold text-white">
+                  <span className="text-xs sm:text-sm font-bold text-white">
                     {partnerDisplayName.charAt(0).toUpperCase()}
                   </span>
                 )}
               </div>
             </div>
-            <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 border-2 border-[#121212] rounded-full glow-emerald" />
+            <span
+              className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-[#121212] transition-colors ${
+                isPartnerOnline ? 'bg-emerald-500 glow-emerald' : 'bg-slate-500'
+              }`}
+            />
           </div>
 
           <div>
             <div className="flex items-center gap-1.5">
-              <h2 className="text-slate-100 font-bold text-sm sm:text-base tracking-tight hover:text-pink-400 cursor-pointer transition-colors" onClick={() => setIsNicknameModalOpen(true)}>
+              <h2
+                className="text-slate-100 font-bold text-xs sm:text-sm tracking-tight hover:text-pink-400 cursor-pointer transition-colors truncate max-w-[110px] sm:max-w-[200px]"
+                onClick={() => setIsNicknameModalOpen(true)}
+              >
                 {partnerDisplayName}
               </h2>
               {customNickname && (
-                <span className="text-[10px] bg-purple-900/60 text-purple-300 px-1.5 py-0.5 rounded-full font-medium border border-purple-700/50">
+                <span className="hidden sm:inline-block text-[9px] sm:text-[10px] bg-purple-900/60 text-purple-300 px-1.5 py-0.5 rounded-full font-medium border border-purple-700/50">
                   Nickname
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-emerald-400 font-medium flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>Active now</span>
-            </p>
+            {isPartnerOnline ? (
+              <p className="text-[10px] sm:text-[11px] text-emerald-400 font-medium flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span>Active now</span>
+              </p>
+            ) : (
+              <p className="text-[10px] sm:text-[11px] text-slate-400 font-medium flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                <span>Offline</span>
+              </p>
+            )}
           </div>
         </div>
 
-        {/* Mobile Tab Switcher Toggle (md:hidden) */}
-        <div className="flex md:hidden items-center bg-slate-950/80 p-1 rounded-xl border border-slate-800">
-          <button
-            onClick={() => onSelectMobileTab('chat')}
-            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
-              mobileActiveTab === 'chat' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400'
-            }`}
-          >
-            <MessageSquare className="w-3.5 h-3.5" />
-            Chat
-          </button>
-          <button
-            onClick={() => onSelectMobileTab('gallery')}
-            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
-              mobileActiveTab === 'gallery' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            Media
-          </button>
-        </div>
-
-        {/* Header Right Actions: Mute Notifications, Audio Call, Video Call, Nickname Settings */}
-        <div className="flex items-center gap-1 sm:gap-1.5">
-          {/* Mute / Unmute Notifications Toggle */}
+        {/* Header Right Actions */}
+        <div className="flex items-center gap-0.5 sm:gap-1">
+          {/* Mute / Unmute Notifications */}
           <button
             onClick={toggleMuteNotifications}
-            className={`p-2 sm:p-2.5 rounded-full transition-all cursor-pointer ${
+            className={`p-2 rounded-full transition-all cursor-pointer ${
               isMuted ? 'text-rose-400 hover:bg-rose-950/30' : 'text-emerald-400 hover:bg-emerald-950/30'
             }`}
-            title={isMuted ? 'Notifications Muted (Click to Unmute Sound)' : 'Notifications Active (Click to Mute Sound)'}
+            title={isMuted ? 'Notifications Muted' : 'Notifications Active'}
           >
-            {isMuted ? <VolumeX className="w-5 h-5 text-rose-400" /> : <Volume2 className="w-5 h-5 text-emerald-400" />}
+            {isMuted ? <VolumeX className="w-4 h-4 sm:w-5 sm:h-5 text-rose-400" /> : <Volume2 className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400" />}
           </button>
 
           {/* Audio Call */}
           <button
-            onClick={onStartCall}
+            onClick={() => onStartCall('audio')}
             disabled={!connected}
-            className="p-2 sm:p-2.5 rounded-full text-slate-300 hover:text-white hover:bg-[#262626] transition-all disabled:opacity-50"
+            className="p-2 rounded-full text-slate-300 hover:text-white hover:bg-[#262626] transition-all disabled:opacity-50"
             title="Start Audio Call"
           >
-            <Phone className="w-5 h-5" />
+            <Phone className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
 
           {/* Video Call */}
           <button
-            onClick={onStartCall}
+            onClick={() => onStartCall('video')}
             disabled={!connected}
-            className="p-2 sm:p-2.5 rounded-full text-slate-300 hover:text-white hover:bg-[#262626] transition-all disabled:opacity-50"
+            className="p-2 rounded-full text-slate-300 hover:text-white hover:bg-[#262626] transition-all disabled:opacity-50"
             title="Start Video Call"
           >
-            <Video className="w-5 h-5" />
+            <Video className="w-4 h-4 sm:w-5 sm:h-5" />
+          </button>
+
+          {/* Memory Lane / Media Vault Button */}
+          <button
+            onClick={onToggleMemoryLane}
+            className={`p-2 rounded-full transition-all cursor-pointer ${
+              showMemoryLane
+                ? 'text-pink-400 bg-pink-950/40 border border-pink-700/50'
+                : 'text-slate-300 hover:text-pink-400 hover:bg-[#262626]'
+            }`}
+            title="Toggle Memory Lane & Media"
+          >
+            <Layers className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
 
           {/* Nickname & Chat Info */}
           <button
             onClick={() => setIsNicknameModalOpen(true)}
-            className="p-2 sm:p-2.5 rounded-full text-slate-300 hover:text-pink-400 hover:bg-[#262626] transition-all"
+            className="p-2 rounded-full text-slate-300 hover:text-pink-400 hover:bg-[#262626] transition-all"
             title="Chat Details & Edit Nickname"
           >
-            <Info className="w-5 h-5" />
+            <Info className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
 
           {/* User Profile Trigger */}
           <button
             onClick={onOpenProfile}
-            className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 overflow-hidden ml-1 hover:border-pink-500 transition-all flex items-center justify-center cursor-pointer"
+            className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-slate-800 border border-slate-700 overflow-hidden ml-1 hover:border-pink-500 transition-all flex items-center justify-center cursor-pointer"
             title="My Profile"
           >
             {userProfile?.avatar_url ? (
               <img src={userProfile.avatar_url} alt="Me" className="w-full h-full object-cover" />
             ) : (
-              <span className="text-xs font-bold text-indigo-300">{myDisplayName.charAt(0).toUpperCase()}</span>
+              <span className="text-[10px] sm:text-xs font-bold text-indigo-300">{myDisplayName.charAt(0).toUpperCase()}</span>
             )}
           </button>
         </div>
       </div>
 
       {/* Messages Scroll Area */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3.5 scrollbar-hide relative z-10">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-3.5 scrollbar-hide relative z-10">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-slate-500 animate-fadeIn">
             <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-pink-500 via-purple-600 to-indigo-600 p-0.5 mb-3 shadow-xl">
@@ -232,28 +688,117 @@ export default function ChatPanel({
             </div>
             <p className="text-slate-200 font-bold text-base mb-1">Your Direct Messages</p>
             <p className="text-slate-400 text-xs max-w-xs text-center">
-              Send encrypted Instagram-style messages or start a call with {partnerDisplayName}.
+              Send encrypted Instagram-style messages, voice notes, or start a call with {partnerDisplayName}.
             </p>
           </div>
         ) : (
           messages.map((msg, index) => {
             const isMe = msg.sender_id === currentUserId;
-            const showDateHeader = index === 0 || 
+            const showDateHeader =
+              index === 0 ||
               new Date(msg.timestamp).getTime() - new Date(messages[index - 1]?.timestamp || 0) > 10 * 60 * 1000;
-            const msgReactions = msg.reactions || {};
-            const reactionEntries = Object.entries(msgReactions);
+
+            const rawReactions = { ...(msg.reactions || {}) };
+            const seenDict = rawReactions._seen || {};
+            delete rawReactions._seen;
+            const reactionEntries = Object.entries(rawReactions);
+            const isEditing = editingMsgId === msg.id;
+
+            // Find partner seen timestamp if available
+            const partnerSeenIso = Object.entries(seenDict).find(([uid]) => uid !== String(currentUserId))?.[1];
+
+            // Filter out transient WebRTC CALL_SIGNAL messages
+            if (msg.text_content && msg.text_content.startsWith('CALL_SIGNAL:')) {
+              return null;
+            }
+
+            // Render Call History System Record
+            if (msg.text_content && msg.text_content.startsWith('CALL_RECORD:')) {
+              const parts = msg.text_content.split(':');
+              const cType = parts[1] || 'video';
+              const cDuration = parseInt(parts[2] || '0', 10);
+              const cStatus = parts[3] || 'completed';
+              const isCaller = msg.sender_id === currentUserId;
+
+              let callTitle = '';
+              let callSubtext = '';
+
+              if (isCaller) {
+                if (cStatus === 'completed' && cDuration > 0) {
+                  callTitle = `Outgoing ${cType === 'video' ? 'Video' : 'Audio'} Call`;
+                  callSubtext = `You called ${partnerDisplayName} • ${formatRecordingTime(cDuration)}`;
+                } else if (cStatus === 'missed' || cStatus === 'unanswered') {
+                  callTitle = `Cancelled ${cType === 'video' ? 'Video' : 'Audio'} Call`;
+                  callSubtext = `No answer from ${partnerDisplayName}`;
+                } else {
+                  callTitle = `Outgoing ${cType === 'video' ? 'Video' : 'Audio'} Call`;
+                  callSubtext = `Call declined by ${partnerDisplayName}`;
+                }
+              } else {
+                if (cStatus === 'completed' && cDuration > 0) {
+                  callTitle = `Incoming ${cType === 'video' ? 'Video' : 'Audio'} Call`;
+                  callSubtext = `${partnerDisplayName} called you • ${formatRecordingTime(cDuration)}`;
+                } else if (cStatus === 'missed' || cStatus === 'unanswered') {
+                  callTitle = `Missed ${cType === 'video' ? 'Video' : 'Audio'} Call`;
+                  callSubtext = `Missed call from ${partnerDisplayName}`;
+                } else {
+                  callTitle = `Declined ${cType === 'video' ? 'Video' : 'Audio'} Call`;
+                  callSubtext = `Declined call from ${partnerDisplayName}`;
+                }
+              }
+
+              return (
+                <div key={msg.id || index} className="space-y-1 my-2">
+                  {showDateHeader && (
+                    <div className="flex items-center justify-center my-3">
+                      <span className="px-3 py-1 rounded-full text-[10px] font-semibold text-slate-400 bg-[#121212] border border-[#262626]">
+                        {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} •{' '}
+                        {new Date(msg.timestamp).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-center my-1.5">
+                    <div className="flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-[#121824]/90 border border-slate-800/90 shadow-lg text-xs max-w-[90%] sm:max-w-md">
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
+                        cStatus === 'missed' || cStatus === 'declined' ? 'bg-rose-500/20 text-rose-400' : 'bg-indigo-500/20 text-indigo-400'
+                      }`}>
+                        {cType === 'audio' ? <Phone className="w-4.5 h-4.5" /> : <Video className="w-4.5 h-4.5" />}
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="font-extrabold text-slate-100 truncate">
+                          {callTitle}
+                        </span>
+                        <span className="text-[11px] text-slate-400 font-semibold truncate">
+                          {callSubtext} • {formatTime(msg.timestamp)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            const replyData = rawReactions._reply || null;
+            delete rawReactions._reply;
 
             return (
-              <div key={msg.id || msg.temp_id || index} className="space-y-1">
+              <div
+                key={msg.id || msg.temp_id || index}
+                id={`msg-${msg.id || msg.temp_id}`}
+                className={`space-y-1 transition-all rounded-3xl p-1 ${
+                  highlightedMsgId === (msg.id || msg.temp_id) ? 'bg-pink-500/20 ring-2 ring-pink-500 animate-pulse' : ''
+                }`}
+              >
                 {showDateHeader && (
                   <div className="flex items-center justify-center my-3">
                     <span className="px-3 py-1 rounded-full text-[10px] font-semibold text-slate-400 bg-[#121212] border border-[#262626]">
-                      {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {new Date(msg.timestamp).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
+                      {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} •{' '}
+                      {new Date(msg.timestamp).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
                     </span>
                   </div>
                 )}
 
-                <div className={`flex items-end gap-2 group ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+                <div className={`flex items-end gap-1.5 group relative ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
                   {/* Partner Avatar for incoming messages */}
                   {!isMe && (
                     <div className="w-7 h-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-purple-300 flex-shrink-0 mb-1">
@@ -262,68 +807,262 @@ export default function ChatPanel({
                   )}
 
                   {/* Message Bubble Container */}
-                  <div className={`max-w-[78%] sm:max-w-[60%] flex flex-col relative ${isMe ? 'items-end' : 'items-start'}`}>
-                    {/* Hover Reaction Toolbar */}
-                    <div className={`absolute -top-9 z-20 hidden group-hover:flex items-center bg-[#1e1e1e] border border-[#333] rounded-full px-2 py-1 shadow-xl gap-1 animate-fadeIn ${
-                      isMe ? 'right-0' : 'left-0'
-                    }`}>
-                      {QUICK_EMOJIS.map((emoji) => (
-                        <button
-                          key={emoji}
-                          onClick={() => onReactMessage && msg.id && onReactMessage(msg.id, emoji)}
-                          className="hover:scale-125 transition-transform text-xs p-1 cursor-pointer"
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Bubble */}
-                    <div
-                      onDoubleClick={() => msg.id && handleDoubleTap(msg.id)}
-                      className={`relative px-4 py-2.5 rounded-3xl shadow-md transition-all select-none cursor-pointer ${
-                        isMe
-                          ? 'bg-gradient-to-r from-pink-500 via-purple-600 to-indigo-600 text-white rounded-br-xs shadow-pink-950/20'
-                          : 'bg-[#262626] text-slate-100 border border-[#333] rounded-bl-xs shadow-slate-950/30'
-                      }`}
-                    >
-                      {/* Media Image */}
-                      {msg.media_url && (
-                        <div className="mb-2 overflow-hidden rounded-2xl border border-white/10 group/img" onClick={() => setLightboxImage(msg.media_url)}>
-                          <img
-                            src={msg.media_url}
-                            alt="Shared media"
-                            className="max-w-full max-h-72 object-cover rounded-2xl transition-transform duration-300 group-hover/img:scale-105"
-                          />
+                  <div
+                    onDoubleClick={() => msg.id && handleDoubleTap(msg.id)}
+                    onTouchStart={(e) => msg.id && handleTouchStart(msg.id, e)}
+                    onTouchEnd={handleTouchEndOrMove}
+                    onTouchMove={handleTouchEndOrMove}
+                    className={`relative px-4 py-2.5 max-w-[85%] sm:max-w-[65%] rounded-3xl shadow-md transition-all select-none touch-manipulation ${
+                      isMe
+                        ? 'bg-gradient-to-r from-pink-500 via-purple-600 to-indigo-600 text-white rounded-br-xs shadow-pink-950/20'
+                        : 'bg-[#262626] text-slate-100 border border-[#333] rounded-bl-xs shadow-slate-950/30'
+                    }`}
+                  >
+                    {/* Quoted Reply Header */}
+                    {replyData && (
+                      <div
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleJumpToMessage(replyData.id);
+                        }}
+                        className={`mb-2 p-2 rounded-2xl text-xs flex flex-col gap-0.5 cursor-pointer transition-all hover:opacity-90 border-l-4 ${
+                          isMe
+                            ? 'bg-black/30 text-white/90 border-pink-300'
+                            : 'bg-black/40 text-slate-200 border-purple-400'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1 font-bold text-[11px] text-pink-300">
+                          <Reply className="w-3 h-3" />
+                          <span>{replyData.sender_name}</span>
                         </div>
-                      )}
+                        <p className="line-clamp-2 text-[11px] opacity-90 break-words font-normal">
+                          {replyData.text || (replyData.media_url ? 'Attachment' : '')}
+                        </p>
+                      </div>
+                    )}
+                    {/* Audio Voice Note Bubble */}
+                    {msg.media_url && isAudioMedia(msg.media_url) ? (
+                      <AudioPlayerBubble src={msg.media_url} isMe={isMe} />
+                    ) : msg.media_url ? (
+                      /* Media Image */
+                      <div
+                        className="mb-2 overflow-hidden rounded-2xl border border-white/10 group/img cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLightboxImage(msg.media_url);
+                        }}
+                      >
+                        <img
+                          src={msg.media_url}
+                          alt="Shared media"
+                          className="max-w-full max-h-72 object-cover rounded-2xl transition-transform duration-300 group-hover/img:scale-105"
+                        />
+                      </div>
+                    ) : null}
 
-                      {/* Text Content */}
-                      {msg.text_content && (
+                    {/* Inline Editing Mode */}
+                    {isEditing ? (
+                      <div className="flex items-center gap-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="text"
+                          value={editingText}
+                          onChange={(e) => setEditingText(e.target.value)}
+                          className="bg-black/40 text-white text-sm px-2.5 py-1 rounded-xl border border-white/30 focus:outline-none w-full"
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => handleSaveEdit(msg.id)}
+                          className="p-1 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 cursor-pointer"
+                          title="Save"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={handleCancelEdit}
+                          className="p-1 rounded-lg bg-slate-700 text-slate-200 hover:bg-slate-600 cursor-pointer"
+                          title="Cancel"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      /* Text Content */
+                      msg.text_content && (
                         <p className="text-sm leading-relaxed whitespace-pre-wrap break-words font-medium">
                           {msg.text_content}
                         </p>
-                      )}
+                      )
+                    )}
 
-                      {/* Timestamp & Status */}
-                      <div className={`flex items-center justify-end gap-1 mt-1 text-[10px] font-medium ${
+                    {/* Timestamp & Seen Status */}
+                    <div
+                      className={`flex items-center justify-end gap-1.5 mt-1 text-[10px] font-medium ${
                         isMe ? 'text-pink-200/80' : 'text-slate-400'
-                      }`}>
-                        <span>{formatTime(msg.timestamp)}</span>
-                        {isMe && <CheckCheck className="w-3.5 h-3.5 text-cyan-300" />}
-                      </div>
-
-                      {/* Reaction Badges attached to bottom corner */}
-                      {reactionEntries.length > 0 && (
-                        <div className={`absolute -bottom-2.5 flex items-center bg-[#1e1e1e] border border-[#3a3a3a] rounded-full px-1.5 py-0.5 text-xs shadow-lg ${
-                          isMe ? 'left-2' : 'right-2'
-                        }`}>
-                          {reactionEntries.map(([uid, emoji]) => (
-                            <span key={uid} className="leading-none">{emoji}</span>
-                          ))}
-                        </div>
-                      )}
+                      }`}
+                    >
+                      {msg.is_edited && <span className="italic opacity-80">(edited)</span>}
+                      <span>{formatTime(msg.timestamp)}</span>
+                      {isMe && partnerSeenIso ? (
+                        <span className="flex items-center gap-1 font-bold text-cyan-300">
+                          <CheckCheck className="w-3.5 h-3.5 text-cyan-300" />
+                          <span>{formatSeenAgo(partnerSeenIso)}</span>
+                        </span>
+                      ) : isMe ? (
+                        <Check className="w-3.5 h-3.5 text-pink-200/80" />
+                      ) : null}
                     </div>
+
+                    {/* Reaction Badges attached to bottom corner */}
+                    {reactionEntries.length > 0 && (
+                      <div
+                        className={`absolute -bottom-3 z-10 flex items-center bg-[#18181b] border border-slate-700/80 rounded-full px-2 py-0.5 text-xs shadow-xl gap-0.5 ${
+                          isMe ? 'left-2' : 'right-2'
+                        }`}
+                      >
+                        {reactionEntries.map(([uid, emoji]) => (
+                          <span key={uid} className="leading-none transform hover:scale-125 transition-transform">
+                            {emoji}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Action Buttons & Dropdown Menu */}
+                  <div className="relative flex-shrink-0 self-center flex items-center gap-0.5">
+                    {/* Quick Reply Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleStartReply(msg);
+                      }}
+                      className={`p-1.5 rounded-full text-slate-400 hover:text-pink-400 hover:bg-slate-800/80 transition-all cursor-pointer ${
+                        activeActionMsgId === msg.id ? 'opacity-100 bg-slate-800 text-pink-400' : 'opacity-80 md:opacity-0 md:group-hover:opacity-100'
+                      }`}
+                      title="Reply to message"
+                    >
+                      <Reply className="w-4 h-4" />
+                    </button>
+
+                    {/* Quick Smile Emoji Trigger */}
+                    <button
+                      type="button"
+                      onClick={(e) => toggleActionMenu(msg.id, e)}
+                      className={`p-1.5 rounded-full text-slate-400 hover:text-pink-400 hover:bg-slate-800/80 transition-all cursor-pointer ${
+                        activeActionMsgId === msg.id ? 'opacity-100 bg-slate-800 text-pink-400' : 'opacity-80 md:opacity-0 md:group-hover:opacity-100'
+                      }`}
+                      title="React with Emoji"
+                    >
+                      <Smile className="w-4 h-4" />
+                    </button>
+
+                    {/* 3-Dots Menu Trigger */}
+                    <button
+                      type="button"
+                      onClick={(e) => toggleActionMenu(msg.id, e)}
+                      className={`p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-slate-800/80 transition-all cursor-pointer ${
+                        activeActionMsgId === msg.id ? 'opacity-100 bg-slate-800 text-white' : 'opacity-80 md:opacity-0 md:group-hover:opacity-100'
+                      }`}
+                      title="Message options"
+                    >
+                      <MoreVertical className="w-4 h-4" />
+                    </button>
+
+                    {/* Dropdown Menu (Reactions, Copy, Edit, Unsend) */}
+                    {activeActionMsgId === msg.id && (
+                      <div
+                        className={`absolute z-50 w-56 sm:w-64 bg-[#18181b] border border-[#27272a] rounded-2xl shadow-2xl backdrop-blur-2xl p-2.5 space-y-2 animate-fadeIn ${
+                          popoverPlacement === 'down' ? 'top-full mt-2' : 'bottom-full mb-2'
+                        } ${
+                          isMe ? 'left-0' : 'right-0'
+                        }`}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {/* Emojis for Reaction */}
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider font-extrabold text-slate-400 mb-1.5 px-1">
+                            Reactions
+                          </p>
+                          <div className="flex items-center justify-between bg-[#09090b] border border-[#27272a] rounded-xl p-1.5">
+                            {QUICK_EMOJIS.map((emoji) => (
+                              <button
+                                key={emoji}
+                                type="button"
+                                onClick={() => {
+                                  if (onReactMessage && msg.id) onReactMessage(msg.id, emoji);
+                                  setActiveActionMsgId(null);
+                                }}
+                                className="hover:scale-135 active:scale-125 transition-transform text-base p-1 cursor-pointer"
+                                title={`React ${emoji}`}
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Options: Reply, Copy Text, Edit & Unsend */}
+                        <div className="pt-1 border-t border-[#27272a] space-y-1">
+                          <button
+                            type="button"
+                            onClick={() => handleStartReply(msg)}
+                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-pink-400 hover:bg-pink-950/30 transition-all cursor-pointer"
+                          >
+                            <Reply className="w-4 h-4 text-pink-400" />
+                            <span>Reply</span>
+                          </button>
+
+                          {(msg.text_content || msg.media_url) && (
+                            <button
+                              type="button"
+                              onClick={() => handleCopyText(msg)}
+                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-cyan-400 hover:bg-cyan-950/30 transition-all cursor-pointer"
+                            >
+                              {copiedMsgId === (msg.id || msg.temp_id) ? (
+                                <>
+                                  <Check className="w-4 h-4 text-emerald-400" />
+                                  <span className="text-emerald-400 font-bold">Copied!</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-4 h-4 text-cyan-400" />
+                                  <span>Copy Text</span>
+                                </>
+                              )}
+                            </button>
+                          )}
+
+                          {isMe && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleStartEdit(msg);
+                                  setActiveActionMsgId(null);
+                                }}
+                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-amber-400 hover:bg-amber-950/30 transition-all cursor-pointer"
+                              >
+                                <Edit3 className="w-4 h-4 text-amber-400" />
+                                <span>Edit Message</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (onUnsendMessage && msg.id) onUnsendMessage(msg.id);
+                                  setActiveActionMsgId(null);
+                                }}
+                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-rose-400 hover:bg-rose-950/30 transition-all cursor-pointer"
+                              >
+                                <Trash2 className="w-4 h-4 text-rose-400" />
+                                <span>Delete / Unsend</span>
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -333,67 +1072,145 @@ export default function ChatPanel({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Instagram Pill Input Bar */}
+      {/* Instagram Pill Input Bar with Voice Note Controls */}
       <div className="p-3 sm:p-4 px-4 sm:px-6 pb-4 sm:pb-6 relative z-10">
-        <form onSubmit={handleSend} className="bg-[#121212] border border-[#262626] rounded-full p-1.5 pl-4 shadow-2xl flex items-center gap-2">
+        {/* Reply Preview Header above input bar */}
+        {replyingToMsg && (
+          <div className="mb-2 px-4 py-2 rounded-2xl bg-[#18181b]/95 border border-[#27272a] shadow-xl flex items-center justify-between gap-3 animate-fadeIn backdrop-blur-md">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-1 h-8 rounded-full bg-gradient-to-b from-pink-500 to-purple-600 flex-shrink-0" />
+              <div className="flex flex-col text-xs min-w-0">
+                <span className="font-bold text-pink-400 flex items-center gap-1">
+                  <Reply className="w-3.5 h-3.5" />
+                  Replying to {replyingToMsg.sender_id === currentUserId ? 'yourself' : partnerDisplayName}
+                </span>
+                <span className="text-slate-300 truncate text-[11px]">
+                  {replyingToMsg.text_content || (replyingToMsg.media_url ? (isAudioMedia(replyingToMsg.media_url) ? '🎤 Voice note' : '📷 Photo') : 'Message')}
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setReplyingToMsg(null)}
+              className="p-1 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              title="Cancel reply"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        <form
+          onSubmit={handleSend}
+          className="bg-[#121212] border border-[#262626] rounded-full p-1.5 pl-3 sm:pl-4 shadow-2xl flex items-center gap-1.5 sm:gap-2"
+        >
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,video/*"
+            accept="image/*,video/*,audio/*"
             onChange={handleFileChange}
             className="hidden"
             id="file-upload"
           />
 
-          {/* Camera / Attachment Icon */}
-          <button
-            type="button"
-            onClick={handleFileClick}
-            disabled={uploading}
-            className="p-2 rounded-full text-slate-400 hover:text-white hover:bg-[#262626] transition-all flex-shrink-0 disabled:opacity-50 cursor-pointer"
-            title="Attach Media"
-          >
-            <Paperclip className="w-5 h-5" />
-          </button>
+          {isRecording ? (
+            /* Voice Recording Active UI */
+            <div className="flex-1 flex items-center justify-between px-3 py-1 bg-red-950/40 border border-red-800/50 rounded-full animate-pulse">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping" />
+                <span className="text-xs font-bold text-red-400">
+                  Recording Voice Note... {formatRecordingTime(recordingTime)}
+                </span>
+              </div>
 
-          {/* Input text */}
-          <input
-            type="text"
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            placeholder="Message..."
-            className="flex-1 bg-transparent border-none text-slate-100 placeholder-slate-500 text-sm font-medium focus:outline-none focus:ring-0 py-1.5"
-          />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={cancelRecording}
+                  className="p-1.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                  title="Cancel Recording"
+                >
+                  <Trash2 className="w-4 h-4 text-rose-400" />
+                </button>
 
-          {/* Quick Heart Icon when empty */}
-          {!newMessage.trim() && (
-            <button
-              type="button"
-              onClick={handleSendQuickHeart}
-              disabled={!connected}
-              className="p-2 rounded-full text-pink-500 hover:scale-125 transition-transform flex-shrink-0 cursor-pointer disabled:opacity-50"
-              title="Send Heart"
-            >
-              <Heart className="w-5 h-5 fill-pink-500" />
-            </button>
-          )}
+                <button
+                  type="button"
+                  onClick={stopAndSendRecording}
+                  className="px-3 py-1 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold text-xs shadow-md"
+                  title="Send Voice Note"
+                >
+                  Send
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* Standard Input Bar UI */
+            <>
+              {/* Camera / Attachment Icon */}
+              <button
+                type="button"
+                onClick={handleFileClick}
+                disabled={uploading}
+                className="p-2 rounded-full text-slate-400 hover:text-white hover:bg-[#262626] transition-all flex-shrink-0 disabled:opacity-50 cursor-pointer active:scale-95"
+                title="Attach Media"
+              >
+                <Paperclip className="w-5 h-5" />
+              </button>
 
-          {/* Send Button when typing */}
-          {newMessage.trim() && (
-            <button
-              type="submit"
-              disabled={!connected || uploading}
-              className="px-4 py-2 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 hover:opacity-95 text-white font-bold text-xs shadow-md shadow-pink-600/30 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
-            >
-              {uploading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <>
-                  <span>Send</span>
-                  <Send className="w-3.5 h-3.5" />
-                </>
+              {/* Input text */}
+              <input
+                ref={inputRef}
+                type="text"
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                placeholder={replyingToMsg ? "Type your reply..." : "Message..."}
+                className="flex-1 bg-transparent border-none text-slate-100 placeholder-slate-500 text-sm font-medium focus:outline-none focus:ring-0 py-1.5"
+              />
+
+              {/* Mic Voice Note Button when empty */}
+              {!newMessage.trim() && (
+                <button
+                  type="button"
+                  onClick={startRecording}
+                  disabled={!connected || uploading}
+                  className="p-2 rounded-full text-slate-400 hover:text-pink-400 hover:bg-[#262626] transition-all flex-shrink-0 cursor-pointer disabled:opacity-50 active:scale-95"
+                  title="Record Voice Note"
+                >
+                  <Mic className="w-5 h-5" />
+                </button>
               )}
-            </button>
+
+              {/* Quick Heart Icon when empty */}
+              {!newMessage.trim() && (
+                <button
+                  type="button"
+                  onClick={handleSendQuickHeart}
+                  disabled={!connected}
+                  className="p-2 rounded-full text-pink-500 hover:scale-125 transition-transform flex-shrink-0 cursor-pointer disabled:opacity-50 active:scale-95"
+                  title="Send Heart"
+                >
+                  <Heart className="w-5 h-5 fill-pink-500" />
+                </button>
+              )}
+
+              {/* Send Button when typing */}
+              {newMessage.trim() && (
+                <button
+                  type="submit"
+                  disabled={!connected || uploading}
+                  className="px-4 py-2 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 hover:opacity-95 text-white font-bold text-xs shadow-md shadow-pink-600/30 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50 active:scale-95"
+                >
+                  {uploading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      <span>Send</span>
+                      <Send className="w-3.5 h-3.5" />
+                    </>
+                  )}
+                </button>
+              )}
+            </>
           )}
         </form>
       </div>

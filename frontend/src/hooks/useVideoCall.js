@@ -4,13 +4,28 @@ const STUN_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
   ],
 };
 
-export function useVideoCall(sendSignal, userId) {
+function setHighQualityAudioSDP(sdp) {
+  if (!sdp) return sdp;
+  if (sdp.includes('a=fmtp:111')) {
+    return sdp.replace(
+      /a=fmtp:111 (.*)/g,
+      'a=fmtp:111 $1;maxaveragebitrate=128000;stereo=1;sprop-stereo=1;useinbandfec=1'
+    );
+  }
+  return sdp;
+}
+
+export function useVideoCall(sendSignal, userId, onSendChatMessage) {
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [callState, setCallState] = useState('idle'); // idle, calling, incoming, active
+  const [callType, setCallType] = useState('video'); // 'video' | 'audio'
   const [error, setError] = useState(null);
   const [muted, setMuted] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(true);
@@ -22,29 +37,58 @@ export function useVideoCall(sendSignal, userId) {
   const pendingCandidatesRef = useRef([]);
   const incomingOfferRef = useRef(null);
   const facingModeRef = useRef('user');
+  const callStartTimeRef = useRef(null);
 
-  const getUserMedia = useCallback(async (constraints = {}) => {
+  // Flexible mobile & desktop camera acquisition
+  const getUserMedia = useCallback(async (isAudioOnly = false, constraints = {}) => {
     try {
+      const targetFacingMode = constraints.facingMode || facingModeRef.current || 'user';
+      const videoConstraint = isAudioOnly
+        ? false
+        : {
+            facingMode: targetFacingMode,
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 },
+          };
+
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { 
-          width: { ideal: 1280 }, 
-          height: { ideal: 720 }, 
-          facingMode: constraints.facingMode || facingModeRef.current 
+        video: videoConstraint,
+        audio: {
+          echoCancellation: { ideal: true },
+          noiseSuppression: { ideal: true },
+          autoGainControl: { ideal: true },
+          sampleRate: { ideal: 48000 },
+          channelCount: { ideal: 2 },
         },
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
       setLocalStream(stream);
       return stream;
     } catch (err) {
       console.error('getUserMedia error:', err);
-      setError('Camera/microphone access required for video call');
+      setError('Microphone/Camera access required for call');
       throw err;
     }
   }, []);
 
   const endCall = useCallback((notifyRemote = true) => {
-    console.log('Ending call');
+    console.log('Ending WebRTC call');
     
+    // Log call record in chat if call was active/calling
+    if (onSendChatMessage && callState !== 'idle' && isCallerRef.current) {
+      let dur = 0;
+      let status = 'completed';
+      if (callState === 'active' && callStartTimeRef.current) {
+        dur = Math.max(1, Math.floor((Date.now() - callStartTimeRef.current) / 1000));
+        status = 'completed';
+      } else if (callState === 'calling') {
+        status = 'unanswered';
+      } else if (callState === 'incoming') {
+        status = 'missed';
+      }
+      onSendChatMessage(`CALL_RECORD:${callType}:${dur}:${status}`);
+    }
+
     if (notifyRemote && callState !== 'idle') {
       try {
         sendSignal('hangup', {});
@@ -68,9 +112,21 @@ export function useVideoCall(sendSignal, userId) {
     isCallerRef.current = false;
     pendingCandidatesRef.current = [];
     incomingOfferRef.current = null;
+    callStartTimeRef.current = null;
     setMuted(false);
     setVideoEnabled(true);
-  }, [callState, localStream, sendSignal]);
+  }, [callState, localStream, sendSignal, onSendChatMessage, callType]);
+
+  const flushCandidates = async (pc) => {
+    while (pendingCandidatesRef.current.length > 0) {
+      const candidate = pendingCandidatesRef.current.shift();
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (e) {
+        console.warn('ICE candidate addition warning:', e);
+      }
+    }
+  };
 
   const createPeerConnection = useCallback(() => {
     if (peerConnectionRef.current) {
@@ -87,15 +143,20 @@ export function useVideoCall(sendSignal, userId) {
     };
 
     pc.ontrack = (event) => {
-      console.log('Received remote track:', event.streams[0]);
+      console.log('[WebRTC] Received remote track:', event.streams[0]);
       if (event.streams && event.streams[0]) {
         setRemoteStream(event.streams[0]);
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = event.streams[0];
+          remoteVideoRef.current.play().catch(e => console.warn('Remote video play error:', e));
+        }
       }
     };
 
     pc.onconnectionstatechange = () => {
-      console.log('Connection state change:', pc.connectionState);
+      console.log('WebRTC Connection state change:', pc.connectionState);
       if (pc.connectionState === 'connected') {
+        callStartTimeRef.current = Date.now();
         setCallState('active');
       } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
         endCall(false);
@@ -105,13 +166,17 @@ export function useVideoCall(sendSignal, userId) {
     return pc;
   }, [sendSignal, endCall]);
 
-  const startCall = useCallback(async () => {
+  const startCall = useCallback(async (requestedCallType = 'video') => {
     try {
       setError(null);
       isCallerRef.current = true;
       setCallState('calling');
+      setCallType(requestedCallType);
 
-      const stream = await getUserMedia();
+      const isAudioOnly = requestedCallType === 'audio';
+      setVideoEnabled(!isAudioOnly);
+
+      const stream = await getUserMedia(isAudioOnly);
       const pc = createPeerConnection();
 
       stream.getTracks().forEach(track => {
@@ -119,14 +184,23 @@ export function useVideoCall(sendSignal, userId) {
       });
 
       const offer = await pc.createOffer();
+      offer.sdp = setHighQualityAudioSDP(offer.sdp);
       await pc.setLocalDescription(offer);
-      sendSignal('offer', offer);
+
+      sendSignal('offer', {
+        sdp: offer,
+        call_type: requestedCallType,
+      });
+
+      if (onSendChatMessage) {
+        onSendChatMessage(`CALL_SIGNAL:offer:${requestedCallType}:${JSON.stringify(offer)}`);
+      }
     } catch (err) {
       console.error('Start call error:', err);
       setError('Failed to start call');
       endCall(true);
     }
-  }, [getUserMedia, createPeerConnection, sendSignal, endCall]);
+  }, [getUserMedia, createPeerConnection, sendSignal, endCall, onSendChatMessage]);
 
   const acceptCall = useCallback(async () => {
     if (!incomingOfferRef.current) {
@@ -137,8 +211,9 @@ export function useVideoCall(sendSignal, userId) {
     try {
       setError(null);
       isCallerRef.current = false;
-      
-      const stream = await getUserMedia();
+      const isAudioOnly = callType === 'audio';
+
+      const stream = await getUserMedia(isAudioOnly);
       const pc = createPeerConnection();
 
       stream.getTracks().forEach(track => {
@@ -148,17 +223,11 @@ export function useVideoCall(sendSignal, userId) {
       const offer = incomingOfferRef.current;
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
 
-      // Process any pending ICE candidates
-      while (pendingCandidatesRef.current.length > 0) {
-        const candidate = pendingCandidatesRef.current.shift();
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (e) {
-          console.warn('Error adding queued ICE candidate:', e);
-        }
-      }
+      // Flush queued candidates after setRemoteDescription
+      await flushCandidates(pc);
 
       const answer = await pc.createAnswer();
+      answer.sdp = setHighQualityAudioSDP(answer.sdp);
       await pc.setLocalDescription(answer);
       sendSignal('answer', answer);
 
@@ -168,7 +237,7 @@ export function useVideoCall(sendSignal, userId) {
       setError('Failed to accept call');
       endCall(true);
     }
-  }, [getUserMedia, createPeerConnection, sendSignal, endCall]);
+  }, [callType, getUserMedia, createPeerConnection, sendSignal, endCall]);
 
   // Handle incoming WebSocket signals
   const handleSignal = useCallback(async (signalType, data, fromClientId) => {
@@ -181,7 +250,13 @@ export function useVideoCall(sendSignal, userId) {
             sendSignal('hangup', { reason: 'busy' });
             return;
           }
-          incomingOfferRef.current = data;
+
+          const offerSdp = data.sdp || data;
+          const incomingCallType = data.call_type || 'video';
+
+          incomingOfferRef.current = offerSdp;
+          setCallType(incomingCallType);
+          setVideoEnabled(incomingCallType !== 'audio');
           setCallState('incoming');
           break;
 
@@ -189,16 +264,7 @@ export function useVideoCall(sendSignal, userId) {
           if (isCallerRef.current && peerConnectionRef.current) {
             const pc = peerConnectionRef.current;
             await pc.setRemoteDescription(new RTCSessionDescription(data));
-            
-            // Flush queued candidates
-            while (pendingCandidatesRef.current.length > 0) {
-              const candidate = pendingCandidatesRef.current.shift();
-              try {
-                await pc.addIceCandidate(new RTCIceCandidate(candidate));
-              } catch (e) {
-                console.warn('Error adding queued candidate after answer:', e);
-              }
-            }
+            await flushCandidates(pc);
             setCallState('active');
           }
           break;
@@ -245,49 +311,82 @@ export function useVideoCall(sendSignal, userId) {
   const toggleVideo = useCallback(() => {
     if (localStream) {
       const videoTracks = localStream.getVideoTracks();
-      videoTracks.forEach(track => {
-        track.enabled = !track.enabled;
-      });
-      setVideoEnabled(!videoTracks[0]?.enabled);
+      if (videoTracks.length > 0) {
+        videoTracks.forEach(track => {
+          track.enabled = !track.enabled;
+        });
+        setVideoEnabled(videoTracks[0]?.enabled);
+      } else if (!videoEnabled) {
+        // Upgrade audio call to video call dynamically
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: facingModeRef.current || 'user' } }).then(vStream => {
+          const newTrack = vStream.getVideoTracks()[0];
+          if (newTrack) {
+            localStream.addTrack(newTrack);
+            if (peerConnectionRef.current) {
+              peerConnectionRef.current.addTrack(newTrack, localStream);
+            }
+            setVideoEnabled(true);
+            if (localVideoRef.current) {
+              localVideoRef.current.srcObject = localStream;
+              localVideoRef.current.play().catch(e => console.warn(e));
+            }
+          }
+        }).catch(e => console.error("Failed to enable video:", e));
+      }
     }
-  }, [localStream]);
+  }, [localStream, videoEnabled]);
 
-  // Flip Camera
+  // Flip Camera for Mobile Phones (Front / Back camera switch)
   const flipCamera = useCallback(async () => {
     if (!localStream) return;
+    const newFacingMode = facingModeRef.current === 'user' ? 'environment' : 'user';
+    facingModeRef.current = newFacingMode;
+
     try {
-      const newFacingMode = facingModeRef.current === 'user' ? 'environment' : 'user';
-      facingModeRef.current = newFacingMode;
-      
-      const videoTracks = localStream.getVideoTracks();
-      videoTracks.forEach(track => track.stop());
-      
-      const newStream = await getUserMedia({ facingMode: newFacingMode });
-      
-      if (peerConnectionRef.current) {
-        const sender = peerConnectionRef.current.getSenders().find(s => 
-          s.track && s.track.kind === 'video'
-        );
-        if (sender && newStream.getVideoTracks()[0]) {
-          await sender.replaceTrack(newStream.getVideoTracks()[0]);
+      const oldVideoTrack = localStream.getVideoTracks()[0];
+      if (oldVideoTrack) oldVideoTrack.stop();
+
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: newFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+
+      const newVideoTrack = newStream.getVideoTracks()[0];
+      if (newVideoTrack) {
+        if (oldVideoTrack) localStream.removeTrack(oldVideoTrack);
+        localStream.addTrack(newVideoTrack);
+
+        if (peerConnectionRef.current) {
+          const sender = peerConnectionRef.current.getSenders().find(s => s.track && s.track.kind === 'video');
+          if (sender) {
+            sender.replaceTrack(newVideoTrack);
+          } else {
+            peerConnectionRef.current.addTrack(newVideoTrack, localStream);
+          }
+        }
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = localStream;
+          localVideoRef.current.play().catch(e => console.warn(e));
         }
       }
     } catch (err) {
       console.error('Flip camera error:', err);
     }
-  }, [localStream, getUserMedia]);
+  }, [localStream]);
 
-  // Attach local stream to ref
+  // Attach local stream to video element
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream;
+      localVideoRef.current.play().catch(e => console.warn('Local video play error:', e));
     }
   }, [localStream]);
 
-  // Attach remote stream to ref
+  // Attach remote stream to video element
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
       remoteVideoRef.current.srcObject = remoteStream;
+      remoteVideoRef.current.play().catch(e => console.warn('Remote video play error:', e));
     }
   }, [remoteStream]);
 
@@ -295,6 +394,7 @@ export function useVideoCall(sendSignal, userId) {
     localStream,
     remoteStream,
     callState,
+    callType,
     error,
     localVideoRef,
     remoteVideoRef,
@@ -302,7 +402,6 @@ export function useVideoCall(sendSignal, userId) {
     acceptCall,
     endCall,
     handleSignal,
-    setError,
     muted,
     videoEnabled,
     toggleMute,

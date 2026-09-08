@@ -144,8 +144,8 @@ export default function LoginPage({ onLogin }) {
       <div className="relative z-10 w-full max-w-md my-auto py-2">
         {/* Header */}
         <div className="text-center mb-4 sm:mb-5">
-          <div className="inline-flex items-center justify-center p-2.5 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-600 to-pink-500 shadow-xl shadow-indigo-500/20 mb-2 animate-float">
-            <MessageCircleCode className="w-6 h-6 text-white" />
+          <div className="inline-flex items-center justify-center p-0.5 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-600 to-pink-500 shadow-xl shadow-indigo-500/20 mb-2 animate-float">
+            <img src="/app_icon.png" alt="K-Messenger Logo" className="w-12 h-12 rounded-[14px] object-cover" />
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
             K<span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">-Messenger</span>
