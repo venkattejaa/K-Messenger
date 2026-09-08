@@ -57,7 +57,13 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
         (payload) => {
           const newRow = payload.new;
           if (newRow.text_content && newRow.text_content.startsWith('USER_SETTING:')) return;
-          if (partnerId && newRow.sender_id !== userId && newRow.sender_id !== partnerId) return;
+          
+          const sId = Number(newRow.sender_id);
+          const myId = Number(userId);
+          const pId = partnerId ? Number(partnerId) : (myId === 1 ? 2 : myId === 2 ? 1 : myId === 3 ? 4 : myId === 4 ? 3 : null);
+
+          if (pId && sId !== myId && sId !== pId) return;
+
           const formatted = {
             id: newRow.id,
             sender_id: newRow.sender_id,
@@ -67,7 +73,7 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
             timestamp: newRow.timestamp,
           };
           setMessages((prev) => {
-            if (prev.some((m) => m.id === formatted.id)) return prev;
+            if (prev.some((m) => Number(m.id) === Number(formatted.id))) return prev;
             return [...prev, formatted];
           });
         }
@@ -79,7 +85,7 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
           const updated = payload.new;
           const rx = typeof updated.reactions === 'string' ? JSON.parse(updated.reactions) : updated.reactions || {};
           setMessages((prev) =>
-            prev.map((m) => (m.id === updated.id ? { ...m, text_content: updated.text_content, reactions: rx } : m))
+            prev.map((m) => (Number(m.id) === Number(updated.id) ? { ...m, text_content: updated.text_content, media_url: updated.media_url, reactions: rx } : m))
           );
         }
       )
@@ -88,7 +94,7 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
         { event: 'DELETE', schema: 'public', table: 'messages' },
         (payload) => {
           if (payload.old && payload.old.id) {
-            setMessages((prev) => prev.filter((m) => m.id !== payload.old.id));
+            setMessages((prev) => prev.filter((m) => Number(m.id) !== Number(payload.old.id)));
           } else {
             setMessages([]);
           }

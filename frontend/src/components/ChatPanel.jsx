@@ -43,15 +43,26 @@ function AudioPlayerBubble({ src, isMe }) {
 
   const handleTimeUpdate = () => {
     if (!audioRef.current) return;
-    const cur = audioRef.current.currentTime;
-    const dur = audioRef.current.duration || 1;
+    const cur = audioRef.current.currentTime || 0;
+    let dur = audioRef.current.duration;
+    if (dur && isFinite(dur) && !isNaN(dur) && dur > 0) {
+      if (dur !== duration) setDuration(dur);
+    } else {
+      dur = Math.max(duration, cur || 1);
+    }
     setCurrentTime(cur);
-    setProgress((cur / dur) * 100);
+    if (cur > duration) {
+      setDuration(cur);
+    }
+    setProgress(dur > 0 ? (cur / dur) * 100 : 0);
   };
 
-  const handleLoadedMetadata = () => {
+  const updateDurationFromAudio = () => {
     if (audioRef.current) {
-      setDuration(audioRef.current.duration || 0);
+      const dur = audioRef.current.duration;
+      if (dur && isFinite(dur) && !isNaN(dur) && dur > 0) {
+        setDuration(dur);
+      }
     }
   };
 
@@ -59,10 +70,13 @@ function AudioPlayerBubble({ src, isMe }) {
     setIsPlaying(false);
     setProgress(0);
     setCurrentTime(0);
+    if (audioRef.current && audioRef.current.currentTime > 0) {
+      setDuration((prev) => Math.max(prev, audioRef.current.currentTime));
+    }
   };
 
   const formatSeconds = (sec) => {
-    if (isNaN(sec) || !isFinite(sec)) return '0:00';
+    if (isNaN(sec) || !isFinite(sec) || sec <= 0) return '0:00';
     const m = Math.floor(sec / 60);
     const s = Math.floor(sec % 60);
     return `${m}:${s < 10 ? '0' : ''}${s}`;
@@ -74,9 +88,10 @@ function AudioPlayerBubble({ src, isMe }) {
         ref={audioRef}
         src={src}
         onTimeUpdate={handleTimeUpdate}
-        onLoadedMetadata={handleLoadedMetadata}
+        onLoadedMetadata={updateDurationFromAudio}
+        onDurationChange={updateDurationFromAudio}
         onEnded={handleEnded}
-        preload="metadata"
+        preload="auto"
       />
       <button
         type="button"
@@ -110,7 +125,7 @@ function AudioPlayerBubble({ src, isMe }) {
         </div>
         <div className={`flex justify-between text-[10px] font-semibold ${isMe ? 'text-pink-100/90' : 'text-slate-400'}`}>
           <span>{formatSeconds(currentTime)}</span>
-          <span>{duration ? formatSeconds(duration) : 'Voice note'}</span>
+          <span>{duration > 0 ? formatSeconds(duration) : 'Voice note'}</span>
         </div>
       </div>
     </div>
@@ -194,12 +209,35 @@ export default function ChatPanel({
 
   const handleJumpToMessage = (msgId) => {
     if (!msgId) return;
-    const el = document.getElementById(`msg-${msgId}`);
+    const targetStr = String(msgId);
+    const el = document.getElementById(`msg-${targetStr}`);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      setHighlightedMsgId(msgId);
-      setTimeout(() => setHighlightedMsgId(null), 2200);
+      setHighlightedMsgId(targetStr);
+      setTimeout(() => setHighlightedMsgId(null), 2500);
     }
+  };
+
+  const isAudioMedia = (url) => {
+    if (!url) return false;
+    const l = url.toLowerCase();
+    return (
+      l.endsWith('.webm') ||
+      l.endsWith('.mp3') ||
+      l.endsWith('.wav') ||
+      l.endsWith('.m4a') ||
+      l.endsWith('.ogg') ||
+      l.includes('voicenote') ||
+      l.includes('audio') ||
+      l.includes('chat_uploads/')
+    );
+  };
+
+  const getAudioUrl = (msg) => {
+    if (!msg) return null;
+    if (msg.media_url && isAudioMedia(msg.media_url)) return msg.media_url;
+    if (msg.text_content && isAudioMedia(msg.text_content)) return msg.text_content;
+    return null;
   };
 
   const handleCopyText = (msg) => {
@@ -524,20 +562,6 @@ export default function ChatPanel({
     }
   };
 
-  const isAudioMedia = (url) => {
-    if (!url) return false;
-    const l = url.toLowerCase();
-    return (
-      l.endsWith('.webm') ||
-      l.endsWith('.mp3') ||
-      l.endsWith('.wav') ||
-      l.endsWith('.m4a') ||
-      l.endsWith('.ogg') ||
-      l.includes('voicenote') ||
-      l.includes('audio')
-    );
-  };
-
   return (
     <div className="flex flex-col h-full bg-[#0B0F17] relative overflow-hidden font-sans">
       {/* Ambient background glow */}
@@ -781,12 +805,16 @@ export default function ChatPanel({
               );
             }
 
+            const audioUrl = getAudioUrl(msg);
+            const msgKey = String(msg.id || msg.temp_id || index);
+            const isHighlighted = highlightedMsgId && String(highlightedMsgId) === msgKey;
+
             return (
               <div
-                key={msg.id || msg.temp_id || index}
-                id={`msg-${msg.id || msg.temp_id}`}
-                className={`space-y-1 transition-all rounded-3xl p-1 ${
-                  highlightedMsgId === (msg.id || msg.temp_id) ? 'bg-pink-500/20 ring-2 ring-pink-500 animate-pulse' : ''
+                key={msgKey}
+                id={`msg-${msgKey}`}
+                className={`space-y-1 transition-all duration-300 rounded-3xl p-1 ${
+                  isHighlighted ? 'bg-pink-500/30 ring-4 ring-pink-500 scale-[1.02] shadow-2xl z-20' : ''
                 }`}
               >
                 {showDateHeader && (
@@ -812,7 +840,7 @@ export default function ChatPanel({
                     onTouchStart={(e) => msg.id && handleTouchStart(msg.id, e)}
                     onTouchEnd={handleTouchEndOrMove}
                     onTouchMove={handleTouchEndOrMove}
-                    className={`relative px-4 py-2.5 max-w-[85%] sm:max-w-[65%] rounded-3xl shadow-md transition-all select-none touch-manipulation ${
+                    className={`relative px-4 py-2.5 max-w-[78%] sm:max-w-[65%] rounded-3xl shadow-md transition-all select-none touch-manipulation overflow-visible ${
                       isMe
                         ? 'bg-gradient-to-r from-pink-500 via-purple-600 to-indigo-600 text-white rounded-br-xs shadow-pink-950/20'
                         : 'bg-[#262626] text-slate-100 border border-[#333] rounded-bl-xs shadow-slate-950/30'
@@ -840,9 +868,10 @@ export default function ChatPanel({
                         </p>
                       </div>
                     )}
+
                     {/* Audio Voice Note Bubble */}
-                    {msg.media_url && isAudioMedia(msg.media_url) ? (
-                      <AudioPlayerBubble src={msg.media_url} isMe={isMe} />
+                    {audioUrl ? (
+                      <AudioPlayerBubble src={audioUrl} isMe={isMe} />
                     ) : msg.media_url ? (
                       /* Media Image */
                       <div
@@ -886,9 +915,9 @@ export default function ChatPanel({
                         </button>
                       </div>
                     ) : (
-                      /* Text Content */
-                      msg.text_content && (
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap break-words font-medium">
+                      /* Text Content (only if not an audio player) */
+                      msg.text_content && msg.text_content !== audioUrl && (
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-medium">
                           {msg.text_content}
                         </p>
                       )
@@ -929,15 +958,15 @@ export default function ChatPanel({
                   </div>
 
                   {/* Action Buttons & Dropdown Menu */}
-                  <div className="relative flex-shrink-0 self-center flex items-center gap-0.5">
-                    {/* Quick Reply Button */}
+                  <div className={`relative flex-shrink-0 self-center flex items-center gap-0.5 z-10 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+                    {/* Quick Reply Button - Positioned closest to bubble */}
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleStartReply(msg);
                       }}
-                      className={`p-1.5 rounded-full text-slate-400 hover:text-pink-400 hover:bg-slate-800/80 transition-all cursor-pointer ${
+                      className={`p-1.5 rounded-full text-slate-400 hover:text-pink-400 hover:bg-slate-800/80 transition-all cursor-pointer flex-shrink-0 ${
                         activeActionMsgId === msg.id ? 'opacity-100 bg-slate-800 text-pink-400' : 'opacity-80 md:opacity-0 md:group-hover:opacity-100'
                       }`}
                       title="Reply to message"
@@ -949,7 +978,7 @@ export default function ChatPanel({
                     <button
                       type="button"
                       onClick={(e) => toggleActionMenu(msg.id, e)}
-                      className={`p-1.5 rounded-full text-slate-400 hover:text-pink-400 hover:bg-slate-800/80 transition-all cursor-pointer ${
+                      className={`p-1.5 rounded-full text-slate-400 hover:text-pink-400 hover:bg-slate-800/80 transition-all cursor-pointer flex-shrink-0 ${
                         activeActionMsgId === msg.id ? 'opacity-100 bg-slate-800 text-pink-400' : 'opacity-80 md:opacity-0 md:group-hover:opacity-100'
                       }`}
                       title="React with Emoji"
