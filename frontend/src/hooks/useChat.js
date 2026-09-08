@@ -196,6 +196,11 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
       } else {
         connectFastAPIWs();
       }
+
+      // Save userId to Android native bridge for background polling
+      if (window.AndroidNative && typeof window.AndroidNative.saveUserId === 'function') {
+        try { window.AndroidNative.saveUserId(userId); } catch (e) {}
+      }
     }
     return () => {
       if (realtimeChannelRef.current) supabase.removeChannel(realtimeChannelRef.current);
@@ -207,6 +212,26 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
       if (wsRef.current) wsRef.current.close();
     };
   }, [userId, fetchMessages, connectSupabaseRealtime, connectFastAPIWs]);
+
+  // Refetch messages when app returns to foreground (handles Android WebView resume)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && userId) {
+        fetchMessages();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Expose global refetch for Android native bridge to call on onResume
+    window.__refetchMessages = () => {
+      if (userId) fetchMessages();
+    };
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      delete window.__refetchMessages;
+    };
+  }, [userId, fetchMessages]);
 
   // Actions
   const sendChatMessage = useCallback(

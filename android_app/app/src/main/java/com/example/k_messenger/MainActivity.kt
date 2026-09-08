@@ -77,6 +77,16 @@ class WebAppInterface(private val context: Context) {
             e.printStackTrace()
         }
     }
+
+    @JavascriptInterface
+    fun saveUserId(userId: Int) {
+        try {
+            val sharedPreferences = context.getSharedPreferences("k_messenger_prefs", Context.MODE_PRIVATE)
+            sharedPreferences.edit().putInt("kmessenger_user_id", userId).apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 }
 
 class MainActivity : ComponentActivity() {
@@ -161,5 +171,28 @@ class MainActivity : ComponentActivity() {
         } else {
             super.onBackPressed()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        MessagePollingService.isAppForeground = true
+        stopService(Intent(this, MessagePollingService::class.java))
+        webView.evaluateJavascript("window.__refetchMessages && window.__refetchMessages()", null)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        MessagePollingService.isAppForeground = false
+        val intent = Intent(this, MessagePollingService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
     }
 }
