@@ -172,33 +172,47 @@ export default function VideoCallOverlay({
   return (
     <div className="fixed inset-0 z-50 bg-slate-950 flex flex-col overflow-hidden animate-fadeIn font-sans">
       
-      {/* Remote Video Container */}
-      {!isAudioCall && (
-        <div className="relative w-full h-full bg-slate-950 flex items-center justify-center overflow-hidden">
-          {/* Blurred Background video fill for portrait phone camera stream */}
-          {fitMode === 'contain' && (
-            <video
-              ref={(el) => {
-                if (el && remoteStream) el.srcObject = remoteStream;
-              }}
-              autoPlay
-              playsInline
-              muted
-              className="absolute inset-0 w-full h-full object-cover blur-3xl opacity-40 scale-125 pointer-events-none"
-            />
-          )}
-
-          {/* Main Remote Video element */}
+      {/* Remote Video Container & Dedicated Audio Player */}
+      <div className={`relative w-full h-full bg-slate-950 flex items-center justify-center overflow-hidden ${isAudioCall ? 'hidden' : 'block'}`}>
+        {/* Blurred Background video fill for portrait phone camera stream */}
+        {fitMode === 'contain' && (
           <video
-            ref={remoteVideoRef}
+            ref={(el) => {
+              if (el && remoteStream) {
+                el.srcObject = remoteStream;
+                el.play().catch((e) => console.warn('Background blur video error:', e));
+              }
+            }}
             autoPlay
             playsInline
-            muted={false}
-            className={`relative z-10 w-full h-full ${
-              fitMode === 'contain' ? 'object-contain' : 'object-cover'
-            }`}
+            muted
+            className="absolute inset-0 w-full h-full object-cover blur-3xl opacity-40 scale-125 pointer-events-none"
           />
-        </div>
+        )}
+
+        {/* Main Remote Video & Audio element */}
+        <video
+          ref={remoteVideoRef}
+          autoPlay
+          playsInline
+          className={`relative z-10 w-full h-full ${
+            fitMode === 'contain' ? 'object-contain' : 'object-cover'
+          }`}
+        />
+      </div>
+
+      {/* Dedicated Remote Audio Player for Audio Calls */}
+      {isAudioCall && (
+        <audio
+          ref={(el) => {
+            if (el && remoteStream) {
+              el.srcObject = remoteStream;
+              el.play().catch((e) => console.warn('Remote audio play error:', e));
+            }
+          }}
+          autoPlay
+          playsInline
+        />
       )}
 
       {/* Audio Call Interface Background & Sound Ripple */}

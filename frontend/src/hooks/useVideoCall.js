@@ -12,11 +12,17 @@ const STUN_SERVERS = {
 
 function setHighQualityAudioSDP(sdp) {
   if (!sdp) return sdp;
-  if (sdp.includes('a=fmtp:111')) {
-    return sdp.replace(
-      /a=fmtp:111 (.*)/g,
-      'a=fmtp:111 $1;maxaveragebitrate=128000;stereo=1;sprop-stereo=1;useinbandfec=1'
-    );
+  try {
+    const match = sdp.match(/a=rtpmap:(\d+) opus\/48000/i);
+    if (match && match[1]) {
+      const pt = match[1];
+      const fmtpRegex = new RegExp(`a=fmtp:${pt} (.*)`, 'g');
+      if (sdp.match(fmtpRegex)) {
+        return sdp.replace(fmtpRegex, `a=fmtp:${pt} $1;maxaveragebitrate=128000;useinbandfec=1`);
+      }
+    }
+  } catch (e) {
+    console.warn('SDP formatting warning:', e);
   }
   return sdp;
 }
