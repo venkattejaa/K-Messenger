@@ -99,13 +99,14 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
     realtimeChannelRef.current = msgChannel;
 
     // 2. Broadcast Channel for WebRTC Video & Voice Calling Signals (Isolated per conversation pair)
-    const callRoomName = (userId && partnerId) ? `call_room_${Math.min(userId, partnerId)}_${Math.max(userId, partnerId)}` : 'call_room';
+    const effectivePartnerId = partnerId || (userId ? (userId === 1 ? 2 : userId === 2 ? 1 : userId === 3 ? 4 : userId === 4 ? 3 : null) : null);
+    const callRoomName = (userId && effectivePartnerId) ? `call_room_${Math.min(userId, effectivePartnerId)}_${Math.max(userId, effectivePartnerId)}` : 'call_room';
     const sigChannel = supabase
       .channel(callRoomName)
       .on('broadcast', { event: 'signal' }, ({ payload }) => {
         if (payload && payload.from_client_id !== clientId && onSignalRef.current) {
           if (payload.target_user_id && Number(payload.target_user_id) !== Number(userId)) return;
-          if (payload.sender_id && partnerId && Number(payload.sender_id) !== Number(partnerId)) return;
+          if (payload.sender_id && effectivePartnerId && Number(payload.sender_id) !== Number(effectivePartnerId)) return;
           onSignalRef.current(payload.signal_type, payload.data, payload.from_client_id);
         }
       })
