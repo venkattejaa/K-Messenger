@@ -313,6 +313,7 @@ function App() {
             <aside className="w-full md:w-[380px] lg:w-[420px] border-l border-[#262626] flex-shrink-0 h-full absolute md:relative right-0 inset-y-0 z-40 bg-[#0B0F17] shadow-2xl animate-fadeIn">
               <MemoryLane
                 currentUserId={currentUserId}
+                partnerId={partnerUser?.user_id}
                 onClose={() => setShowMemoryLane(false)}
                 onBackToChat={() => setShowMemoryLane(false)}
               />

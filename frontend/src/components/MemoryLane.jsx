@@ -1,34 +1,74 @@
-import { Image as ImageIcon, Loader2, X, Maximize2, Sparkles, Download, Calendar, Search, Layers, ArrowLeft, Heart, Film } from 'lucide-react';
-import { useState, useEffect, useCallback } from 'react';
+import { Image as ImageIcon, Loader2, X, Maximize2, Download, Calendar, Search, Layers, ArrowLeft, Film, Mic, Play, Pause } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiGetMessages } from '../services/supabaseService';
 
-export default function MemoryLane({ currentUserId, onBackToChat, onClose }) {
-  const [images, setImages] = useState([]);
+function isAudioMedia(url) {
+  if (!url) return false;
+  const l = url.toLowerCase();
+  return (
+    l.endsWith('.webm') ||
+    l.endsWith('.mp3') ||
+    l.endsWith('.wav') ||
+    l.endsWith('.m4a') ||
+    l.endsWith('.ogg') ||
+    l.endsWith('.aac') ||
+    l.endsWith('.flac') ||
+    l.startsWith('data:audio') ||
+    l.includes('voicenote') ||
+    l.includes('audio_')
+  );
+}
+
+function isVideoMedia(url) {
+  if (!url) return false;
+  const l = url.toLowerCase();
+  return (
+    l.endsWith('.mp4') ||
+    l.endsWith('.mov') ||
+    l.endsWith('.mkv') ||
+    l.endsWith('.avi') ||
+    l.includes('video_')
+  );
+}
+
+export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onClose }) {
+  const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [expandedImage, setExpandedImage] = useState(null);
+  const [activeTab, setActiveTab] = useState('visual'); // 'visual' (photos & videos) or 'audio' (voice notes)
+  const [expandedItem, setExpandedItem] = useState(null);
 
   const fetchGallery = useCallback(async () => {
     try {
-      const allMsgs = await apiGetMessages();
-      const mediaMsgs = allMsgs.filter((m) => Boolean(m.media_url));
+      const allMsgs = await apiGetMessages(currentUserId, partnerId);
+      const mediaMsgs = allMsgs.filter((m) => {
+        if (!m.media_url) return false;
+        if (m.text_content && (m.text_content.startsWith('USER_SETTING:') || m.text_content.startsWith('CALL_SIGNAL:') || m.text_content.startsWith('CALL_RECORD:'))) {
+          return false;
+        }
+        return true;
+      });
       mediaMsgs.reverse(); // Newest first
-      setImages(mediaMsgs);
+      setItems(mediaMsgs);
     } catch (err) {
       console.error('Failed to fetch gallery:', err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentUserId, partnerId]);
 
   useEffect(() => {
     fetchGallery();
   }, [fetchGallery]);
 
-  const filteredImages = images.filter((img) => {
+  const filteredItems = items.filter((item) => {
+    const isAudio = isAudioMedia(item.media_url);
+    if (activeTab === 'visual' && isAudio) return false;
+    if (activeTab === 'audio' && !isAudio) return false;
+
     if (!searchQuery) return true;
-    const dateStr = new Date(img.timestamp).toLocaleDateString().toLowerCase();
-    const textStr = (img.text_content || '').toLowerCase();
+    const dateStr = new Date(item.timestamp).toLocaleDateString().toLowerCase();
+    const textStr = (item.text_content || '').toLowerCase();
     return dateStr.includes(searchQuery.toLowerCase()) || textStr.includes(searchQuery.toLowerCase());
   });
 
@@ -39,6 +79,9 @@ export default function MemoryLane({ currentUserId, onBackToChat, onClose }) {
       year: 'numeric',
     });
   };
+
+  const visualCount = items.filter((i) => !isAudioMedia(i.media_url)).length;
+  const audioCount = items.filter((i) => isAudioMedia(i.media_url)).length;
 
   return (
     <div className="flex flex-col h-full bg-[#0B0F17] border-r border-[#262626] backdrop-blur-2xl relative font-sans">
@@ -68,13 +111,13 @@ export default function MemoryLane({ currentUserId, onBackToChat, onClose }) {
               <h3 className="text-slate-100 font-bold text-base tracking-tight flex items-center gap-1.5">
                 Memory Lane
               </h3>
-              <p className="text-xs text-slate-400 font-medium">Shared Photos & Media</p>
+              <p className="text-xs text-slate-400 font-medium">Shared Media & Memories</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <span className="px-3 py-1 rounded-full text-xs font-bold bg-purple-900/40 text-purple-300 border border-purple-700/50 shadow-inner">
-              {images.length} {images.length === 1 ? 'item' : 'items'}
+              {filteredItems.length} {filteredItems.length === 1 ? 'item' : 'items'}
             </span>
             {(onClose || onBackToChat) && (
               <button
@@ -88,6 +131,32 @@ export default function MemoryLane({ currentUserId, onBackToChat, onClose }) {
           </div>
         </div>
 
+        {/* Tab Selection */}
+        <div className="flex items-center gap-2 mt-3 bg-[#18181b] p-1 rounded-xl border border-[#27272a]">
+          <button
+            onClick={() => setActiveTab('visual')}
+            className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+              activeTab === 'visual'
+                ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <ImageIcon className="w-3.5 h-3.5" />
+            <span>Photos & Videos ({visualCount})</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('audio')}
+            className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+              activeTab === 'audio'
+                ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Mic className="w-3.5 h-3.5" />
+            <span>Voice Notes ({audioCount})</span>
+          </button>
+        </div>
+
         {/* Search filter input */}
         <div className="relative mt-3">
           <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -95,7 +164,7 @@ export default function MemoryLane({ currentUserId, onBackToChat, onClose }) {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by caption or date..."
+            placeholder="Search caption or date..."
             className="w-full bg-[#18181b] border border-[#27272a] rounded-xl pl-9 pr-4 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-pink-500/60 transition-all font-medium"
           />
         </div>
@@ -108,43 +177,85 @@ export default function MemoryLane({ currentUserId, onBackToChat, onClose }) {
             <Loader2 className="w-8 h-8 animate-spin text-pink-500 mb-3" />
             <p className="text-xs font-semibold text-slate-400">Loading memories...</p>
           </div>
-        ) : filteredImages.length === 0 ? (
+        ) : filteredItems.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-slate-500 p-6 text-center animate-fadeIn">
             <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-pink-500/10 to-purple-600/10 border border-purple-500/20 flex items-center justify-center mb-4 shadow-xl">
-              <ImageIcon className="w-9 h-9 text-pink-400/80" />
+              {activeTab === 'visual' ? (
+                <ImageIcon className="w-9 h-9 text-pink-400/80" />
+              ) : (
+                <Mic className="w-9 h-9 text-pink-400/80" />
+              )}
             </div>
-            <p className="text-base font-bold text-slate-200 mb-1">No shared memories yet</p>
+            <p className="text-base font-bold text-slate-200 mb-1">
+              No shared {activeTab === 'visual' ? 'photos or videos' : 'voice notes'}
+            </p>
             <p className="text-xs text-slate-400 max-w-xs leading-relaxed">
-              Send photos, videos, or attachments in your chat to collect shared moments here.
+              Shared {activeTab === 'visual' ? 'photos and videos' : 'voice notes'} in your conversation will appear here.
             </p>
           </div>
-        ) : (
+        ) : activeTab === 'visual' ? (
           <div className="grid grid-cols-2 gap-3">
-            {filteredImages.map((img) => (
-              <div
-                key={img.id}
-                onClick={() => setExpandedImage(img)}
-                className="group relative aspect-square overflow-hidden rounded-2xl border border-[#27272a] bg-[#18181b] cursor-pointer shadow-lg hover:shadow-2xl hover:shadow-pink-950/40 hover:border-pink-500/50 transition-all duration-300 active:scale-95"
-              >
-                <img
-                  src={img.media_url}
-                  alt="Memory media"
-                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                  loading="lazy"
-                />
+            {filteredItems.map((item) => {
+              const isVideo = isVideoMedia(item.media_url);
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => setExpandedItem(item)}
+                  className="group relative aspect-square overflow-hidden rounded-2xl border border-[#27272a] bg-[#18181b] cursor-pointer shadow-lg hover:shadow-2xl hover:shadow-pink-950/40 hover:border-pink-500/50 transition-all duration-300 active:scale-95"
+                >
+                  {isVideo ? (
+                    <video
+                      src={item.media_url}
+                      className="w-full h-full object-cover"
+                      muted
+                      playsInline
+                    />
+                  ) : (
+                    <img
+                      src={item.media_url}
+                      alt="Memory media"
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                      loading="lazy"
+                    />
+                  )}
 
-                {/* Hover overlay card */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 p-3 flex flex-col justify-between">
-                  <div className="self-end">
-                    <span className="p-1.5 rounded-xl bg-black/60 backdrop-blur-md text-white block shadow-md">
-                      <Maximize2 className="w-3.5 h-3.5 text-pink-300" />
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-slate-200 font-medium truncate flex items-center gap-1">
-                    <Calendar className="w-3 h-3 text-pink-400" />
-                    <span>{formatDate(img.timestamp)}</span>
+                  {isVideo && (
+                    <div className="absolute top-2 left-2 p-1.5 rounded-lg bg-black/60 backdrop-blur-md text-white">
+                      <Film className="w-3.5 h-3.5 text-pink-400" />
+                    </div>
+                  )}
+
+                  {/* Hover overlay card */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 p-3 flex flex-col justify-between">
+                    <div className="self-end">
+                      <span className="p-1.5 rounded-xl bg-black/60 backdrop-blur-md text-white block shadow-md">
+                        <Maximize2 className="w-3.5 h-3.5 text-pink-300" />
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-200 font-medium truncate flex items-center gap-1">
+                      <Calendar className="w-3 h-3 text-pink-400" />
+                      <span>{formatDate(item.timestamp)}</span>
+                    </div>
                   </div>
                 </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {filteredItems.map((item) => (
+              <div
+                key={item.id}
+                className="p-3.5 rounded-2xl bg-[#18181b] border border-[#27272a] flex flex-col gap-2 shadow-md"
+              >
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <div className="flex items-center gap-1.5">
+                    <Mic className="w-3.5 h-3.5 text-pink-400" />
+                    <span className="font-semibold text-slate-300">Voice Note</span>
+                  </div>
+                  <span>{formatDate(item.timestamp)}</span>
+                </div>
+                <audio controls src={item.media_url} className="w-full h-8 mt-1 rounded-lg" />
               </div>
             ))}
           </div>
@@ -152,10 +263,10 @@ export default function MemoryLane({ currentUserId, onBackToChat, onClose }) {
       </div>
 
       {/* Lightbox Expanded Modal */}
-      {expandedImage && (
+      {expandedItem && (
         <div
           className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-2xl flex items-center justify-center p-4 md:p-8 animate-fadeIn"
-          onClick={() => setExpandedImage(null)}
+          onClick={() => setExpandedItem(null)}
         >
           <div
             className="relative max-w-4xl max-h-[90vh] bg-[#121212] border border-[#27272a] rounded-3xl overflow-hidden shadow-2xl flex flex-col"
@@ -165,11 +276,11 @@ export default function MemoryLane({ currentUserId, onBackToChat, onClose }) {
             <div className="p-4 border-b border-[#27272a] flex items-center justify-between bg-[#0B0F17]">
               <div className="flex items-center gap-2 text-xs text-slate-300 font-medium">
                 <Calendar className="w-4 h-4 text-pink-400" />
-                <span>{new Date(expandedImage.timestamp).toLocaleString()}</span>
+                <span>{new Date(expandedItem.timestamp).toLocaleString()}</span>
               </div>
               <div className="flex items-center gap-2">
                 <a
-                  href={expandedImage.media_url}
+                  href={expandedItem.media_url}
                   download
                   target="_blank"
                   rel="noreferrer"
@@ -179,7 +290,7 @@ export default function MemoryLane({ currentUserId, onBackToChat, onClose }) {
                   Save
                 </a>
                 <button
-                  onClick={() => setExpandedImage(null)}
+                  onClick={() => setExpandedItem(null)}
                   className="p-2 rounded-xl bg-[#18181b] border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
                 >
                   <X className="w-4 h-4" />
@@ -187,13 +298,22 @@ export default function MemoryLane({ currentUserId, onBackToChat, onClose }) {
               </div>
             </div>
 
-            {/* Expanded Media Image */}
+            {/* Expanded Media Content */}
             <div className="flex-1 overflow-hidden flex items-center justify-center p-4 bg-black/80 min-h-[300px]">
-              <img
-                src={expandedImage.media_url}
-                alt="Expanded memory"
-                className="max-w-full max-h-[75vh] object-contain rounded-2xl shadow-2xl"
-              />
+              {isVideoMedia(expandedItem.media_url) ? (
+                <video
+                  src={expandedItem.media_url}
+                  controls
+                  autoPlay
+                  className="max-w-full max-h-[75vh] rounded-2xl shadow-2xl"
+                />
+              ) : (
+                <img
+                  src={expandedItem.media_url}
+                  alt="Expanded memory"
+                  className="max-w-full max-h-[75vh] object-contain rounded-2xl shadow-2xl"
+                />
+              )}
             </div>
           </div>
         </div>
