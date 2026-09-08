@@ -351,7 +351,7 @@ export default function ChatPanel({
 
     if (messages.length > prevMessagesLengthRef.current) {
       const lastMsg = messages[messages.length - 1];
-      if (lastMsg && lastMsg.sender_id !== currentUserId && !isMuted) {
+      if (lastMsg && Number(lastMsg.sender_id) === Number(partnerIdNum) && !isMuted) {
         // Skip text notification chime for call signaling/records
         if (lastMsg.text_content && (lastMsg.text_content.startsWith('CALL_SIGNAL:') || lastMsg.text_content.startsWith('CALL_RECORD:'))) {
           prevMessagesLengthRef.current = messages.length;

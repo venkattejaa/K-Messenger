@@ -98,11 +98,14 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
 
     realtimeChannelRef.current = msgChannel;
 
-    // 2. Broadcast Channel for WebRTC Video & Voice Calling Signals
+    // 2. Broadcast Channel for WebRTC Video & Voice Calling Signals (Isolated per conversation pair)
+    const callRoomName = (userId && partnerId) ? `call_room_${Math.min(userId, partnerId)}_${Math.max(userId, partnerId)}` : 'call_room';
     const sigChannel = supabase
-      .channel('call_room')
+      .channel(callRoomName)
       .on('broadcast', { event: 'signal' }, ({ payload }) => {
         if (payload && payload.from_client_id !== clientId && onSignalRef.current) {
+          if (payload.target_user_id && Number(payload.target_user_id) !== Number(userId)) return;
+          if (payload.sender_id && partnerId && Number(payload.sender_id) !== Number(partnerId)) return;
           onSignalRef.current(payload.signal_type, payload.data, payload.from_client_id);
         }
       })
@@ -140,7 +143,7 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
 
       presenceChannelRef.current = presenceChannel;
     }
-  }, [clientId, userId]);
+  }, [clientId, userId, partnerId]);
 
   // --- LOCAL FASTAPI WEBSOCKET MODE ---
   const connectFastAPIWs = useCallback(() => {
@@ -290,6 +293,7 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
             data,
             from_client_id: clientId,
             sender_id: userId,
+            target_user_id: partnerId,
           },
         });
       } else if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -299,11 +303,12 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
             signal_type: signalType,
             data,
             sender_id: userId,
+            target_user_id: partnerId,
           })
         );
       }
     },
-    [clientId, userId]
+    [clientId, userId, partnerId]
   );
 
   const unsendMessage = useCallback(async (messageId) => {

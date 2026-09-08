@@ -170,7 +170,8 @@ function App() {
 
     // 2. If last message is CALL_SIGNAL:offer from partner and within last 45 seconds
     if (lastMsg.text_content && lastMsg.text_content.startsWith('CALL_SIGNAL:offer:')) {
-      if (lastMsg.sender_id !== currentUserId && callState === 'idle') {
+      const expectedPartnerId = partnerUser?.user_id || (currentUserId === 1 ? 2 : currentUserId === 2 ? 1 : currentUserId === 3 ? 4 : currentUserId === 4 ? 3 : null);
+      if (Number(lastMsg.sender_id) === Number(expectedPartnerId) && callState === 'idle') {
         const msgTime = new Date(lastMsg.timestamp || Date.now()).getTime();
         if (Date.now() - msgTime < 45000) {
           try {

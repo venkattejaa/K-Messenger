@@ -133,9 +133,20 @@ class MessagePollingService : Service() {
         }
     }
 
+    private fun getPartnerId(userId: Int): Int {
+        return when (userId) {
+            1 -> 2
+            2 -> 1
+            3 -> 4
+            4 -> 3
+            else -> if (userId % 2 == 1) userId + 1 else userId - 1
+        }
+    }
+
     private fun processMessages(messages: JSONArray, userId: Int) {
         val lastSeenId = sharedPreferences.getInt("kmessenger_last_seen_msg_id", -1)
         var newLastSeenId = lastSeenId
+        val partnerId = getPartnerId(userId)
 
         for (i in messages.length() - 1 downTo 0) { // Process oldest to newest
             val msg = messages.getJSONObject(i)
@@ -148,7 +159,7 @@ class MessagePollingService : Service() {
                     newLastSeenId = id
                 }
 
-                if (senderId != userId) {
+                if (senderId == partnerId) {
                     handleNewMessage(id, textContent)
                 }
             }
