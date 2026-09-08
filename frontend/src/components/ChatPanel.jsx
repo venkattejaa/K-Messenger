@@ -248,15 +248,20 @@ export default function ChatPanel({
 
   const isImageMedia = (url) => {
     if (!url) return false;
-    const l = url.toLowerCase();
+    const l = url.toLowerCase().split('?')[0];
     return (
       l.endsWith('.jpg') ||
       l.endsWith('.jpeg') ||
       l.endsWith('.png') ||
       l.endsWith('.gif') ||
       l.endsWith('.webp') ||
+      l.endsWith('.heic') ||
+      l.endsWith('.heif') ||
+      l.endsWith('.bmp') ||
+      l.endsWith('.svg') ||
       l.includes('image_') ||
-      l.includes('photo_')
+      l.includes('photo_') ||
+      l.includes('img_')
     );
   };
 
@@ -276,9 +281,19 @@ export default function ChatPanel({
 
   const getImageUrl = (msg) => {
     if (!msg) return null;
-    if (msg.media_url && isImageMedia(msg.media_url)) return msg.media_url;
-    if (msg.text_content && isImageMedia(msg.text_content)) return msg.text_content;
-    if (msg.media_url && !isAudioMedia(msg.media_url) && !isVideoMedia(msg.media_url)) return msg.media_url;
+    if (msg.media_url && !isAudioMedia(msg.media_url) && !isVideoMedia(msg.media_url)) {
+      return msg.media_url;
+    }
+    if (msg.text_content) {
+      const trimmed = msg.text_content.trim();
+      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        if (!isAudioMedia(trimmed) && !isVideoMedia(trimmed)) {
+          if (isImageMedia(trimmed) || trimmed.includes('/chat_media/') || trimmed.includes('/chat_uploads/')) {
+            return trimmed;
+          }
+        }
+      }
+    }
     return null;
   };
 
