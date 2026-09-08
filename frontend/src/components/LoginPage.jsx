@@ -4,7 +4,7 @@ import { apiLogin, apiSendOtp, apiRegister, apiUploadFile } from '../services/su
 import SupabaseSetupBanner from './SupabaseSetupBanner';
 
 export default function LoginPage({ onLogin }) {
-  const [activeTab, setActiveTab] = useState('register'); // 'register' or 'login'
+  const [activeTab, setActiveTab] = useState('login'); // 'login' or 'register'
   
   // Login fields
   const [username, setUsername] = useState('');

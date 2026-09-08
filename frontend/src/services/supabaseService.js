@@ -4,19 +4,21 @@ import { getApiBaseUrl } from '../config';
 // 1. User Login
 export const apiLogin = async (username, passcode) => {
   if (isSupabaseConfigured()) {
-    const cleanUname = username.trim();
-    const cleanPass = passcode.trim();
+    const cleanUname = (username || '').trim();
+    const cleanPass = (passcode || '').trim();
+    const uLower = cleanUname.toLowerCase();
 
-    // 1. Try case-insensitive match on username
+    // 1. Direct match on username, email, or display_name
     let { data, error } = await supabase
       .from('users')
       .select('*')
-      .ilike('username', cleanUname)
-      .eq('passcode', cleanPass)
-      .maybeSingle();
+      .or(`username.ilike.${cleanUname},email.ilike.${cleanUname},display_name.ilike.${cleanUname}`)
+      .eq('passcode', cleanPass);
 
-    // 2. Alias fallback: If username typed is Chinni_is_buzy, srevarsha, or Srevarsha for user ID 2
-    if (!data && (cleanUname.toLowerCase() === 'chinni_is_buzy' || cleanUname.toLowerCase() === 'srevarsha')) {
+    let userObj = (data && data.length > 0) ? data[0] : null;
+
+    // 2. Alias fallback for User 2 (Srevarsha / Chinni_is_buzy)
+    if (!userObj && ['chinni_is_buzy', 'chinni', 'srevarsha', 'varsha'].includes(uLower)) {
       const { data: user2 } = await supabase
         .from('users')
         .select('*')
@@ -24,20 +26,46 @@ export const apiLogin = async (username, passcode) => {
         .eq('passcode', cleanPass)
         .maybeSingle();
 
-      if (user2) data = user2;
+      if (user2) userObj = user2;
     }
 
-    if (!data) {
-      throw new Error('Invalid credentials');
+    // 3. Alias fallback for User 1 (Venkat / venkattejaa)
+    if (!userObj && ['venkat', 'venkattejaa', 'venkat teja'].includes(uLower)) {
+      const { data: user1 } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', 1)
+        .eq('passcode', cleanPass)
+        .maybeSingle();
+
+      if (user1) userObj = user1;
+    }
+
+    // 4. Broad case-insensitive username scan if still not found
+    if (!userObj) {
+      const { data: allUsers } = await supabase.from('users').select('*');
+      if (allUsers) {
+        userObj = allUsers.find(
+          (u) =>
+            u.passcode === cleanPass &&
+            (u.username?.toLowerCase() === uLower ||
+              u.display_name?.toLowerCase() === uLower ||
+              u.email?.toLowerCase() === uLower)
+        );
+      }
+    }
+
+    if (!userObj) {
+      throw new Error('Invalid username or passcode. Please check your login details.');
     }
 
     return {
-      user_id: data.id,
-      username: data.username,
-      email: data.email,
-      display_name: data.display_name || data.username,
-      avatar_url: data.avatar_url,
-      bio: data.bio || 'Available for chat ✨',
+      user_id: userObj.id,
+      username: userObj.username,
+      email: userObj.email,
+      display_name: userObj.display_name || userObj.username,
+      avatar_url: userObj.avatar_url,
+      bio: userObj.bio || 'Available for chat ✨',
     };
   }
 
