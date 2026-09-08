@@ -166,6 +166,24 @@ export default function ChatPanel({
   const [highlightedMsgId, setHighlightedMsgId] = useState(null);
   const inputRef = useRef(null);
 
+  const defaultPartnerName =
+    currentUserId === 1 || username?.toLowerCase() === 'venkattejaa'
+      ? 'Srevarsha'
+      : currentUserId === 2 || username?.toLowerCase() === 'srevarsha' || username?.toLowerCase() === 'chinni_is_buzy'
+      ? 'Venkat Teja'
+      : currentUserId === 3 || username?.toLowerCase() === 'tester1'
+      ? 'Tester 2'
+      : currentUserId === 4 || username?.toLowerCase() === 'tester2'
+      ? 'Tester 1'
+      : 'Contact';
+
+  const myDisplayName = userProfile?.display_name || username || 'You';
+  const partnerOriginalName = partnerUser?.display_name || partnerUser?.username || defaultPartnerName;
+  const partnerDisplayName = customNickname || partnerOriginalName;
+
+  const partnerIdNum = partnerUser?.user_id || (currentUserId === 1 ? 2 : currentUserId === 2 ? 1 : currentUserId === 3 ? 4 : currentUserId === 4 ? 3 : null);
+  const isPartnerOnline = partnerIdNum && onlineUserIds.includes(String(partnerIdNum));
+
   const handleStartReply = (msg) => {
     setReplyingToMsg(msg);
     setActiveActionMsgId(null);
@@ -519,24 +537,6 @@ export default function ChatPanel({
       l.includes('audio')
     );
   };
-
-  const defaultPartnerName =
-    currentUserId === 1 || username?.toLowerCase() === 'venkattejaa'
-      ? 'Srevarsha'
-      : currentUserId === 2 || username?.toLowerCase() === 'srevarsha' || username?.toLowerCase() === 'chinni_is_buzy'
-      ? 'Venkat Teja'
-      : currentUserId === 3 || username?.toLowerCase() === 'tester1'
-      ? 'Tester 2'
-      : currentUserId === 4 || username?.toLowerCase() === 'tester2'
-      ? 'Tester 1'
-      : 'Contact';
-
-  const myDisplayName = userProfile?.display_name || username || 'You';
-  const partnerOriginalName = partnerUser?.display_name || partnerUser?.username || defaultPartnerName;
-  const partnerDisplayName = customNickname || partnerOriginalName;
-
-  const partnerIdNum = partnerUser?.user_id || (currentUserId === 1 ? 2 : currentUserId === 2 ? 1 : currentUserId === 3 ? 4 : currentUserId === 4 ? 3 : null);
-  const isPartnerOnline = partnerIdNum && onlineUserIds.includes(String(partnerIdNum));
 
   return (
     <div className="flex flex-col h-full bg-[#0B0F17] relative overflow-hidden font-sans">
