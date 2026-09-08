@@ -87,6 +87,40 @@ class WebAppInterface(private val context: Context) {
             e.printStackTrace()
         }
     }
+
+    @JavascriptInterface
+    fun setAudioOutputRoute(route: String) {
+        try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            audioManager.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
+
+            when (route.lowercase()) {
+                "ear", "earpiece" -> {
+                    audioManager.stopBluetoothSco()
+                    audioManager.isBluetoothScoOn = false
+                    audioManager.isSpeakerphoneOn = false
+                }
+                "speaker", "loudspeaker" -> {
+                    audioManager.stopBluetoothSco()
+                    audioManager.isBluetoothScoOn = false
+                    audioManager.isSpeakerphoneOn = true
+                }
+                "bluetooth", "buds", "headset" -> {
+                    audioManager.isSpeakerphoneOn = false
+                    audioManager.startBluetoothSco()
+                    audioManager.isBluetoothScoOn = true
+                }
+                "normal" -> {
+                    audioManager.stopBluetoothSco()
+                    audioManager.isBluetoothScoOn = false
+                    audioManager.isSpeakerphoneOn = false
+                    audioManager.mode = android.media.AudioManager.MODE_NORMAL
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 }
 
 class MainActivity : ComponentActivity() {

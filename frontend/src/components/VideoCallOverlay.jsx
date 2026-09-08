@@ -1,7 +1,7 @@
 import {
   Phone, PhoneOff, Mic, MicOff, Video, VideoOff, RotateCcw, ShieldCheck,
   Maximize2, Minimize2, Sparkles, Volume2, User, Headphones, Crop,
-  ChevronDown, MoreVertical, X
+  ChevronDown, MoreVertical, X, Check
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -25,7 +25,7 @@ export default function VideoCallOverlay({
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [pictureInPicture, setPictureInPicture] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
-  const [speakerMode, setSpeakerMode] = useState(true);
+  const [audioRoute, setAudioRoute] = useState('speaker'); // 'speaker' | 'earpiece' | 'bluetooth'
   const [fitMode, setFitMode] = useState('contain'); // 'contain' or 'cover'
 
   // Draggable & Minimizable Local Video PiP State
@@ -121,6 +121,10 @@ export default function VideoCallOverlay({
       setCallDuration(0);
       setIsCallMinimized(false);
       setShowMoreMenu(false);
+      // Reset Android audio route when call terminates
+      if (window.AndroidNative && typeof window.AndroidNative.setAudioOutputRoute === 'function') {
+        try { window.AndroidNative.setAudioOutputRoute('normal'); } catch (e) {}
+      }
     }
     return () => clearInterval(interval);
   }, [callState]);
@@ -131,25 +135,51 @@ export default function VideoCallOverlay({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const toggleSpeakerMode = () => {
-    setSpeakerMode((prev) => {
-      const next = !prev;
-      if (remoteVideoRef?.current && typeof remoteVideoRef.current.setSinkId === 'function') {
-        navigator.mediaDevices?.enumerateDevices?.().then((devices) => {
-          const audioOutputs = devices.filter((d) => d.kind === 'audiooutput');
-          if (audioOutputs.length > 0) {
-            const targetDevice = !next
-              ? audioOutputs.find((d) => d.label.toLowerCase().includes('earpiece') || d.label.toLowerCase().includes('receiver')) || audioOutputs[0]
-              : audioOutputs.find((d) => d.label.toLowerCase().includes('speaker')) || audioOutputs[0];
+  const changeAudioRoute = async (route) => {
+    setAudioRoute(route);
 
-            if (targetDevice?.deviceId) {
-              remoteVideoRef.current.setSinkId(targetDevice.deviceId).catch((e) => console.warn('setSinkId error:', e));
-            }
-          }
-        }).catch((e) => console.warn('Enumerate devices error:', e));
+    // 1. Android Native Audio Manager Bridge
+    if (window.AndroidNative && typeof window.AndroidNative.setAudioOutputRoute === 'function') {
+      try {
+        window.AndroidNative.setAudioOutputRoute(route);
+      } catch (e) {
+        console.warn('AndroidNative setAudioOutputRoute error:', e);
       }
-      return next;
-    });
+    }
+
+    // 2. HTML5 MediaElement SinkId for Web Browsers
+    const mediaEl = remoteVideoRef?.current || document.querySelector('audio');
+    if (mediaEl && typeof mediaEl.setSinkId === 'function') {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const audioOutputs = devices.filter((d) => d.kind === 'audiooutput');
+        if (audioOutputs.length > 0) {
+          let targetDevice = null;
+          if (route === 'earpiece') {
+            targetDevice = audioOutputs.find((d) =>
+              d.label.toLowerCase().includes('earpiece') || d.label.toLowerCase().includes('receiver')
+            ) || audioOutputs[0];
+          } else if (route === 'bluetooth') {
+            targetDevice = audioOutputs.find((d) =>
+              d.label.toLowerCase().includes('bluetooth') ||
+              d.label.toLowerCase().includes('headset') ||
+              d.label.toLowerCase().includes('buds') ||
+              d.label.toLowerCase().includes('hands-free')
+            ) || audioOutputs.find((d) => d.deviceId !== 'default');
+          } else {
+            targetDevice = audioOutputs.find((d) =>
+              d.label.toLowerCase().includes('speaker')
+            ) || audioOutputs[0];
+          }
+
+          if (targetDevice?.deviceId) {
+            await mediaEl.setSinkId(targetDevice.deviceId);
+          }
+        }
+      } catch (err) {
+        console.warn('setSinkId error:', err);
+      }
+    }
   };
 
   const togglePip = async () => {
@@ -280,31 +310,48 @@ export default function VideoCallOverlay({
       {/* Audio Call Interface Background */}
       {isAudioCall && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-[#0B0F17] via-[#111827] to-[#0B0F17] z-10 px-4">
-          {/* Earpiece vs Speaker Audio Option Selector */}
-          <div className="flex items-center gap-2 bg-slate-900/90 border border-slate-800 p-1 rounded-full text-xs font-semibold backdrop-blur-md mb-8">
+          {/* 3-Option Audio Output Selector: Ear Speaker (Proximity), Speaker, Bluetooth / Buds */}
+          <div className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 p-1.5 rounded-full text-xs font-semibold backdrop-blur-md mb-8 shadow-xl">
             <button
               type="button"
-              onClick={() => speakerMode && toggleSpeakerMode()}
+              onClick={() => changeAudioRoute('earpiece')}
               className={`px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition-all ${
-                !speakerMode
-                  ? 'bg-indigo-600 text-white shadow-md'
+                audioRoute === 'earpiece'
+                  ? 'bg-indigo-600 text-white shadow-md glow-indigo font-bold'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
+              title="Ear Speaker near proximity sensor"
             >
               <Headphones className="w-3.5 h-3.5" />
-              <span>Earpiece</span>
+              <span>Ear Speaker</span>
             </button>
+
             <button
               type="button"
-              onClick={() => !speakerMode && toggleSpeakerMode()}
+              onClick={() => changeAudioRoute('speaker')}
               className={`px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition-all ${
-                speakerMode
-                  ? 'bg-emerald-600 text-white shadow-md'
+                audioRoute === 'speaker'
+                  ? 'bg-emerald-600 text-white shadow-md glow-emerald font-bold'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
+              title="Main Speakerphone"
             >
               <Volume2 className="w-3.5 h-3.5" />
-              <span>Speaker Phone</span>
+              <span>Speaker</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => changeAudioRoute('bluetooth')}
+              className={`px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition-all ${
+                audioRoute === 'bluetooth'
+                  ? 'bg-purple-600 text-white shadow-md glow-purple font-bold'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Bluetooth Headset or Earbuds"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Bluetooth / Buds</span>
             </button>
           </div>
 
@@ -491,17 +538,62 @@ export default function VideoCallOverlay({
           {/* Popover "More" Menu */}
           {showMoreMenu && (
             <div className="mb-3 bg-slate-900/95 border border-slate-700/80 rounded-2xl p-2 shadow-2xl backdrop-blur-2xl text-xs space-y-1 animate-fadeIn min-w-[190px]">
-              <button
-                type="button"
-                onClick={() => {
-                  toggleSpeakerMode();
-                  setShowMoreMenu(false);
-                }}
-                className="w-full px-3 py-2 rounded-xl flex items-center gap-2 hover:bg-slate-800 text-slate-200 font-semibold transition-colors"
-              >
-                {speakerMode ? <Headphones className="w-4 h-4 text-indigo-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
-                <span>Switch to {speakerMode ? 'Earpiece' : 'Speaker'}</span>
-              </button>
+              <div className="border-b border-slate-800 pb-1.5 mb-1 space-y-1">
+                <p className="text-[10px] uppercase tracking-wider font-extrabold text-slate-400 px-2 pt-1">
+                  Audio Output
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    changeAudioRoute('earpiece');
+                    setShowMoreMenu(false);
+                  }}
+                  className={`w-full px-2.5 py-1.5 rounded-xl flex items-center justify-between font-semibold transition-colors ${
+                    audioRoute === 'earpiece' ? 'bg-indigo-600/90 text-white' : 'text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Headphones className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Ear Speaker (Proximity)</span>
+                  </div>
+                  {audioRoute === 'earpiece' && <Check className="w-3.5 h-3.5" />}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    changeAudioRoute('speaker');
+                    setShowMoreMenu(false);
+                  }}
+                  className={`w-full px-2.5 py-1.5 rounded-xl flex items-center justify-between font-semibold transition-colors ${
+                    audioRoute === 'speaker' ? 'bg-emerald-600/90 text-white' : 'text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Loudspeaker</span>
+                  </div>
+                  {audioRoute === 'speaker' && <Check className="w-3.5 h-3.5" />}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    changeAudioRoute('bluetooth');
+                    setShowMoreMenu(false);
+                  }}
+                  className={`w-full px-2.5 py-1.5 rounded-xl flex items-center justify-between font-semibold transition-colors ${
+                    audioRoute === 'bluetooth' ? 'bg-purple-600/90 text-white' : 'text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Bluetooth Headset / Buds</span>
+                  </div>
+                  {audioRoute === 'bluetooth' && <Check className="w-3.5 h-3.5" />}
+                </button>
+              </div>
 
               {!isAudioCall && (
                 <button
