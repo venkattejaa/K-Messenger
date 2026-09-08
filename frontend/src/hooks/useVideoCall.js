@@ -318,10 +318,16 @@ export function useVideoCall(sendSignal, userId, onSendChatMessage) {
     if (localStream) {
       const videoTracks = localStream.getVideoTracks();
       if (videoTracks.length > 0) {
+        const nextState = !videoTracks[0].enabled;
         videoTracks.forEach(track => {
-          track.enabled = !track.enabled;
+          track.enabled = nextState;
         });
-        setVideoEnabled(videoTracks[0]?.enabled);
+        setVideoEnabled(nextState);
+
+        if (nextState && localVideoRef.current) {
+          localVideoRef.current.srcObject = localStream;
+          localVideoRef.current.play().catch(e => console.warn('Local video play error:', e));
+        }
       } else if (!videoEnabled) {
         // Upgrade audio call to video call dynamically
         navigator.mediaDevices.getUserMedia({ video: { facingMode: facingModeRef.current || 'user' } }).then(vStream => {

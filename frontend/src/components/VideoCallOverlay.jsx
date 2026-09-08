@@ -1,6 +1,7 @@
 import {
   Phone, PhoneOff, Mic, MicOff, Video, VideoOff, RotateCcw, ShieldCheck,
-  Maximize2, Minimize2, Sparkles, Volume2, User, Headphones, Crop
+  Maximize2, Minimize2, Sparkles, Volume2, User, Headphones, Crop,
+  ChevronDown, MoreVertical, X
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -20,10 +21,12 @@ export default function VideoCallOverlay({
   videoEnabled,
   partnerDisplayName = 'Partner',
 }) {
+  const [isCallMinimized, setIsCallMinimized] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [pictureInPicture, setPictureInPicture] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const [speakerMode, setSpeakerMode] = useState(true);
-  const [fitMode, setFitMode] = useState('contain'); // 'contain' (show full phone stream) or 'cover' (fill screen)
+  const [fitMode, setFitMode] = useState('contain'); // 'contain' or 'cover'
 
   // Draggable & Minimizable Local Video PiP State
   const [position, setPosition] = useState({
@@ -97,7 +100,7 @@ export default function VideoCallOverlay({
       localVideoRef.current.srcObject = localStream;
       localVideoRef.current.play().catch((e) => console.warn('Local video play error:', e));
     }
-  }, [localStream, callState, localVideoRef]);
+  }, [localStream, callState, localVideoRef, videoEnabled]);
 
   useEffect(() => {
     if (remoteVideoRef?.current && remoteStream) {
@@ -116,6 +119,8 @@ export default function VideoCallOverlay({
       }, 1000);
     } else {
       setCallDuration(0);
+      setIsCallMinimized(false);
+      setShowMoreMenu(false);
     }
     return () => clearInterval(interval);
   }, [callState]);
@@ -169,12 +174,69 @@ export default function VideoCallOverlay({
   const isCalling = callState === 'calling';
   const isAudioCall = callType === 'audio' || (!videoEnabled && !localStream?.getVideoTracks()?.length);
 
+  // -------------------------------------------------------------
+  // MINIMIZED CALL BANNER PILL (Allows user to chat during call)
+  // -------------------------------------------------------------
+  if (isCallMinimized && isActive) {
+    return (
+      <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 animate-fadeIn font-sans">
+        <div className="bg-slate-900/95 border border-indigo-500/50 rounded-full px-4 py-2 flex items-center gap-3 shadow-2xl backdrop-blur-xl glow-indigo text-xs text-white">
+          <div
+            onClick={() => setIsCallMinimized(false)}
+            className="flex items-center gap-2.5 cursor-pointer hover:opacity-90 active:scale-95 transition-transform"
+          >
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+            <span className="font-extrabold text-white">{partnerDisplayName}</span>
+            <span className="text-slate-400 font-mono">{formatDuration(callDuration)}</span>
+          </div>
+
+          <div className="h-4 w-px bg-slate-700 mx-0.5" />
+
+          {/* Quick Mute */}
+          <button
+            type="button"
+            onClick={onToggleMute}
+            className={`p-1.5 rounded-full transition-all ${
+              muted ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white'
+            }`}
+            title={muted ? 'Unmute' : 'Mute'}
+          >
+            {muted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+          </button>
+
+          {/* End Call */}
+          <button
+            type="button"
+            onClick={onEnd}
+            className="p-1.5 rounded-full bg-rose-600 hover:bg-rose-500 text-white shadow-md transition-all active:scale-95"
+            title="End Call"
+          >
+            <PhoneOff className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Expand Fullscreen */}
+          <button
+            type="button"
+            onClick={() => setIsCallMinimized(false)}
+            className="p-1.5 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white shadow-md transition-all active:scale-95"
+            title="Expand Full Screen Call"
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // -------------------------------------------------------------
+  // FULL SCREEN CALL OVERLAY
+  // -------------------------------------------------------------
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950 flex flex-col overflow-hidden animate-fadeIn font-sans">
+    <div className="fixed inset-0 z-50 bg-slate-950 flex flex-col overflow-hidden animate-fadeIn font-sans select-none">
       
-      {/* Remote Video Container & Dedicated Audio Player */}
+      {/* Remote Video Container & Audio Element */}
       <div className={`relative w-full h-full bg-slate-950 flex items-center justify-center overflow-hidden ${isAudioCall ? 'hidden' : 'block'}`}>
-        {/* Blurred Background video fill for portrait phone camera stream */}
+        {/* Blurred Background video fill */}
         {fitMode === 'contain' && (
           <video
             ref={(el) => {
@@ -190,7 +252,7 @@ export default function VideoCallOverlay({
           />
         )}
 
-        {/* Main Remote Video & Audio element */}
+        {/* Main Remote Video element */}
         <video
           ref={remoteVideoRef}
           autoPlay
@@ -215,17 +277,39 @@ export default function VideoCallOverlay({
         />
       )}
 
-      {/* Audio Call Interface Background & Sound Ripple */}
+      {/* Audio Call Interface Background */}
       {isAudioCall && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-[#0B0F17] via-[#111827] to-[#0B0F17] z-10">
-          {/* Audio output mode indicator */}
-          <div className="absolute top-6 left-6 flex items-center gap-2 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-full text-xs font-semibold text-indigo-300 backdrop-blur-md">
-            {speakerMode ? <Volume2 className="w-4 h-4 text-emerald-400" /> : <Headphones className="w-4 h-4 text-indigo-400" />}
-            <span>{speakerMode ? 'Speaker Phone' : 'Earpiece Mode'}</span>
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-[#0B0F17] via-[#111827] to-[#0B0F17] z-10 px-4">
+          {/* Earpiece vs Speaker Audio Option Selector */}
+          <div className="flex items-center gap-2 bg-slate-900/90 border border-slate-800 p-1 rounded-full text-xs font-semibold backdrop-blur-md mb-8">
+            <button
+              type="button"
+              onClick={() => speakerMode && toggleSpeakerMode()}
+              className={`px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition-all ${
+                !speakerMode
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Headphones className="w-3.5 h-3.5" />
+              <span>Earpiece</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => !speakerMode && toggleSpeakerMode()}
+              className={`px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition-all ${
+                speakerMode
+                  ? 'bg-emerald-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Volume2 className="w-3.5 h-3.5" />
+              <span>Speaker Phone</span>
+            </button>
           </div>
 
-          {/* Animated sound ripple aura */}
-          <div className="relative w-44 h-44 sm:w-56 sm:h-56 flex items-center justify-center mb-8">
+          {/* Animated Avatar Aura */}
+          <div className="relative w-44 h-44 sm:w-56 sm:h-56 flex items-center justify-center mb-6">
             {isActive && (
               <>
                 <div className="absolute inset-0 rounded-full bg-indigo-500/20 animate-ping" />
@@ -276,6 +360,7 @@ export default function VideoCallOverlay({
               <p className="text-slate-400 text-sm font-medium">Establishing HD WebRTC Connection</p>
               <div className="mt-8">
                 <button
+                  type="button"
                   onClick={onEnd}
                   className="w-16 h-16 rounded-full bg-rose-600 hover:bg-rose-700 flex items-center justify-center text-white transition-all shadow-lg shadow-rose-600/40 hover:scale-105 active:scale-95 glow-rose"
                   title="Cancel Call"
@@ -305,14 +390,14 @@ export default function VideoCallOverlay({
               <p className="text-slate-400 text-sm font-medium mb-10">Encrypted WebRTC P2P Call</p>
 
               <div className="flex items-center justify-center gap-8">
-                <button onClick={onAccept} className="group flex flex-col items-center gap-2">
+                <button type="button" onClick={onAccept} className="group flex flex-col items-center gap-2">
                   <div className="w-16 h-16 rounded-full bg-emerald-500 hover:bg-emerald-600 flex items-center justify-center text-white transition-all shadow-lg shadow-emerald-500/40 group-hover:scale-110 active:scale-95 glow-emerald">
                     <Phone className="w-7 h-7" />
                   </div>
                   <span className="text-xs font-semibold text-emerald-400">Accept</span>
                 </button>
 
-                <button onClick={onEnd} className="group flex flex-col items-center gap-2">
+                <button type="button" onClick={onEnd} className="group flex flex-col items-center gap-2">
                   <div className="w-16 h-16 rounded-full bg-rose-600 hover:bg-rose-700 flex items-center justify-center text-white transition-all shadow-lg shadow-rose-600/40 group-hover:scale-110 active:scale-95 glow-rose">
                     <PhoneOff className="w-7 h-7" />
                   </div>
@@ -324,29 +409,32 @@ export default function VideoCallOverlay({
         </div>
       )}
 
-      {/* Active Call - Top Glass Status Bar */}
+      {/* Active Call - Top Bar with Minimize Button & Status */}
       {isActive && (
-        <div className="absolute top-6 left-6 right-6 flex items-center justify-between z-20 pointer-events-none">
-          <div className="pointer-events-auto flex items-center gap-2">
-            <span className="glass-panel px-3.5 py-1.5 rounded-full text-xs font-semibold text-slate-200 border border-slate-700/60 shadow-lg flex items-center gap-2">
+        <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-30">
+          {/* Minimize Call Button */}
+          <button
+            type="button"
+            onClick={() => setIsCallMinimized(true)}
+            className="px-3.5 py-2 rounded-2xl bg-slate-900/80 hover:bg-slate-800 border border-slate-700/80 text-white text-xs font-bold transition-all shadow-lg flex items-center gap-1.5 active:scale-95 cursor-pointer backdrop-blur-md"
+            title="Minimize Call to Chat"
+          >
+            <ChevronDown className="w-4 h-4 text-indigo-400" />
+            <span>Minimize</span>
+          </button>
+
+          <div className="flex items-center gap-2">
+            <span className="glass-panel px-3.5 py-1.5 rounded-full text-xs font-bold text-slate-200 border border-slate-700/60 shadow-lg flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
               <span>{formatDuration(callDuration)}</span>
-            </span>
-          </div>
-
-          <div className="pointer-events-auto flex items-center gap-2">
-            <span className="glass-panel px-4 py-1.5 rounded-full text-xs font-semibold text-indigo-300 border border-slate-700/60 shadow-lg flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span>HD WebRTC Direct</span>
             </span>
           </div>
         </div>
       )}
 
-      {/* Draggable & Minimizable Local Video Picture-in-Picture */}
+      {/* Draggable Local Video PiP */}
       {isActive && videoEnabled && !isAudioCall && !pictureInPicture && (
         isLocalMinimized ? (
-          /* Minimized Floating Circle Badge */
           <div
             style={{ left: `${position.x}px`, top: `${position.y}px` }}
             onMouseDown={handlePointerDown}
@@ -363,7 +451,6 @@ export default function VideoCallOverlay({
             </button>
           </div>
         ) : (
-          /* Expanded Draggable Video Card */
           <div
             style={{ left: `${position.x}px`, top: `${position.y}px` }}
             onMouseDown={handlePointerDown}
@@ -378,7 +465,6 @@ export default function VideoCallOverlay({
               className="w-full h-full object-cover pointer-events-none"
             />
 
-            {/* Top Bar overlay with label & minimize button */}
             <div className="absolute top-2 left-2 right-2 flex items-center justify-between pointer-events-none">
               <span className="px-2 py-0.5 rounded-md bg-slate-950/85 backdrop-blur-md text-[10px] font-extrabold text-slate-100 border border-slate-800">
                 You
@@ -399,94 +485,119 @@ export default function VideoCallOverlay({
         )
       )}
 
-      {/* Floating Call Controls Bar */}
+      {/* Floating Modern Call Controls Bar */}
       {isActive && (
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
-          <div className="glass-panel border border-slate-700/80 rounded-full px-5 sm:px-6 py-3.5 flex items-center gap-3 sm:gap-5 shadow-2xl shadow-slate-950/80 backdrop-blur-2xl">
-            {/* Speaker Phone vs Earpiece Toggle */}
-            <button
-              onClick={toggleSpeakerMode}
-              className={`p-3 sm:p-3.5 rounded-full transition-all ${
-                speakerMode
-                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
-                  : 'bg-slate-800/80 hover:bg-slate-700 text-slate-200'
-              }`}
-              title={speakerMode ? 'Speaker Phone Active' : 'Earpiece Mode Active'}
-            >
-              {speakerMode ? <Volume2 className="w-5 h-5" /> : <Headphones className="w-5 h-5" />}
-            </button>
-
-            {/* Fit vs Fill Stream Aspect Ratio Toggle */}
-            {!isAudioCall && (
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
+          {/* Popover "More" Menu */}
+          {showMoreMenu && (
+            <div className="mb-3 bg-slate-900/95 border border-slate-700/80 rounded-2xl p-2 shadow-2xl backdrop-blur-2xl text-xs space-y-1 animate-fadeIn min-w-[190px]">
               <button
-                onClick={() => setFitMode(fitMode === 'contain' ? 'cover' : 'contain')}
-                className={`p-3 sm:p-3.5 rounded-full transition-all ${
-                  fitMode === 'contain'
-                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30'
-                    : 'bg-slate-800/80 hover:bg-slate-700 text-slate-200'
-                }`}
-                title={fitMode === 'contain' ? 'Fit Whole Video (Click to Fill Screen)' : 'Fill Screen (Click to Fit Whole Video)'}
+                type="button"
+                onClick={() => {
+                  toggleSpeakerMode();
+                  setShowMoreMenu(false);
+                }}
+                className="w-full px-3 py-2 rounded-xl flex items-center gap-2 hover:bg-slate-800 text-slate-200 font-semibold transition-colors"
               >
-                <Crop className="w-5 h-5" />
+                {speakerMode ? <Headphones className="w-4 h-4 text-indigo-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
+                <span>Switch to {speakerMode ? 'Earpiece' : 'Speaker'}</span>
               </button>
-            )}
 
-            {/* Flip Camera (video mode only) */}
-            {videoEnabled && (
+              {!isAudioCall && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFitMode(fitMode === 'contain' ? 'cover' : 'contain');
+                    setShowMoreMenu(false);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl flex items-center gap-2 hover:bg-slate-800 text-slate-200 font-semibold transition-colors"
+                >
+                  <Crop className="w-4 h-4 text-purple-400" />
+                  <span>Mode: {fitMode === 'contain' ? 'Fit Video' : 'Fill Screen'}</span>
+                </button>
+              )}
+
+              {!isAudioCall && videoEnabled && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    togglePip();
+                    setShowMoreMenu(false);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl flex items-center gap-2 hover:bg-slate-800 text-slate-200 font-semibold transition-colors"
+                >
+                  {pictureInPicture ? <Minimize2 className="w-4 h-4 text-pink-400" /> : <Maximize2 className="w-4 h-4 text-pink-400" />}
+                  <span>Picture-in-Picture</span>
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Primary Bottom Bar: Reverse Camera, Mute, Camera Off, End Call, Three Dots */}
+          <div className="glass-panel border border-slate-700/80 rounded-full px-4 sm:px-6 py-3 flex items-center gap-3 sm:gap-4 shadow-2xl shadow-slate-950/80 backdrop-blur-2xl">
+            
+            {/* 1. Reverse / Flip Camera */}
+            {videoEnabled && !isAudioCall && (
               <button
+                type="button"
                 onClick={onFlipCamera}
-                className="p-3 sm:p-3.5 rounded-full bg-slate-800/80 hover:bg-slate-700 text-slate-200 hover:text-white transition-all"
+                className="p-3 rounded-full bg-slate-800/80 hover:bg-slate-700 text-slate-200 hover:text-white transition-all cursor-pointer active:scale-95"
                 title="Flip Camera"
               >
                 <RotateCcw className="w-5 h-5" />
               </button>
             )}
 
-            {/* Mute Toggle */}
+            {/* 2. Mute Microphone */}
             <button
+              type="button"
               onClick={onToggleMute}
-              className={`p-3 sm:p-3.5 rounded-full transition-all ${
+              className={`p-3 rounded-full transition-all cursor-pointer active:scale-95 ${
                 muted
                   ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/30'
-                  : 'bg-slate-800/80 hover:bg-slate-700 text-slate-200 hover:text-white'
+                  : 'bg-slate-800/80 hover:bg-slate-700 text-slate-200'
               }`}
               title={muted ? 'Unmute Microphone' : 'Mute Microphone'}
             >
               {muted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
             </button>
 
-            {/* End Call Button (Prominent) */}
+            {/* 3. Turn On/Off Camera */}
             <button
-              onClick={onEnd}
-              className="p-4 rounded-full bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white transition-all shadow-xl shadow-rose-600/50 hover:scale-105 active:scale-95 glow-rose"
-              title="End Call"
-            >
-              <PhoneOff className="w-6 h-6" />
-            </button>
-
-            {/* Video Camera Toggle */}
-            <button
+              type="button"
               onClick={onToggleVideo}
-              className={`p-3 sm:p-3.5 rounded-full transition-all ${
+              className={`p-3 rounded-full transition-all cursor-pointer active:scale-95 ${
                 !videoEnabled
                   ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/30'
-                  : 'bg-slate-800/80 hover:bg-slate-700 text-slate-200 hover:text-white'
+                  : 'bg-slate-800/80 hover:bg-slate-700 text-slate-200'
               }`}
               title={videoEnabled ? 'Turn Off Camera' : 'Turn On Camera'}
             >
               {!videoEnabled ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
             </button>
 
-            {/* Picture-in-Picture (video mode only) */}
-            {videoEnabled && (
-              <button
-                onClick={togglePip}
-                className="p-3 sm:p-3.5 rounded-full bg-slate-800/80 hover:bg-slate-700 text-slate-200 hover:text-white transition-all"
-                title="Picture in Picture"
-              >
-                {pictureInPicture ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
-              </button>
-            )}
+            {/* 4. End Call Button (Prominent Red) */}
+            <button
+              type="button"
+              onClick={onEnd}
+              className="p-3.5 sm:p-4 rounded-full bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white transition-all shadow-xl shadow-rose-600/50 hover:scale-105 active:scale-95 glow-rose cursor-pointer"
+              title="End Call"
+            >
+              <PhoneOff className="w-6 h-6" />
+            </button>
+
+            {/* 5. Three Dots / More Options */}
+            <button
+              type="button"
+              onClick={() => setShowMoreMenu((prev) => !prev)}
+              className={`p-3 rounded-full transition-all cursor-pointer active:scale-95 ${
+                showMoreMenu ? 'bg-indigo-600 text-white' : 'bg-slate-800/80 hover:bg-slate-700 text-slate-200'
+              }`}
+              title="More Options"
+            >
+              <MoreVertical className="w-5 h-5" />
+            </button>
+
           </div>
         </div>
       )}

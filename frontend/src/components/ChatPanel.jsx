@@ -701,6 +701,9 @@ export default function ChatPanel({
             const rawReactions = { ...(msg.reactions || {}) };
             const seenDict = rawReactions._seen || {};
             delete rawReactions._seen;
+            const replyData = rawReactions._reply || null;
+            delete rawReactions._reply;
+
             const reactionEntries = Object.entries(rawReactions);
             const isEditing = editingMsgId === msg.id;
 
@@ -777,9 +780,6 @@ export default function ChatPanel({
                 </div>
               );
             }
-
-            const replyData = rawReactions._reply || null;
-            delete rawReactions._reply;
 
             return (
               <div
@@ -1073,7 +1073,7 @@ export default function ChatPanel({
       </div>
 
       {/* Instagram Pill Input Bar with Voice Note Controls */}
-      <div className="p-3 sm:p-4 px-4 sm:px-6 pb-4 sm:pb-6 relative z-10">
+      <div className="p-2.5 sm:p-4 px-3 sm:px-6 pb-3 sm:pb-5 relative z-10 sticky bottom-0 bg-[#0B0F17] flex-shrink-0">
         {/* Reply Preview Header above input bar */}
         {replyingToMsg && (
           <div className="mb-2 px-4 py-2 rounded-2xl bg-[#18181b]/95 border border-[#27272a] shadow-xl flex items-center justify-between gap-3 animate-fadeIn backdrop-blur-md">
@@ -1102,7 +1102,7 @@ export default function ChatPanel({
 
         <form
           onSubmit={handleSend}
-          className="bg-[#121212] border border-[#262626] rounded-full p-1.5 pl-3 sm:pl-4 shadow-2xl flex items-center gap-1.5 sm:gap-2"
+          className="bg-[#121212] border border-[#262626] rounded-3xl p-1.5 pl-3 sm:pl-4 shadow-2xl flex items-center gap-1.5 sm:gap-2 min-h-[46px]"
         >
           <input
             ref={fileInputRef}
@@ -1157,14 +1157,24 @@ export default function ChatPanel({
                 <Paperclip className="w-5 h-5" />
               </button>
 
-              {/* Input text */}
-              <input
+              {/* Auto-expanding Textarea Input like Instagram */}
+              <textarea
                 ref={inputRef}
-                type="text"
+                rows={1}
                 value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
+                onChange={(e) => {
+                  setNewMessage(e.target.value);
+                  e.target.style.height = 'auto';
+                  e.target.style.height = `${Math.min(e.target.scrollHeight, 110)}px`;
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (newMessage.trim()) handleSend(e);
+                  }
+                }}
                 placeholder={replyingToMsg ? "Type your reply..." : "Message..."}
-                className="flex-1 bg-transparent border-none text-slate-100 placeholder-slate-500 text-sm font-medium focus:outline-none focus:ring-0 py-1.5"
+                className="flex-1 bg-transparent border-none text-slate-100 placeholder-slate-500 text-sm font-medium focus:outline-none focus:ring-0 py-1.5 resize-none max-h-28 overflow-y-auto"
               />
 
               {/* Mic Voice Note Button when empty */}
