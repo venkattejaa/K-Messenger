@@ -1,7 +1,7 @@
 import {
   MessageSquare, Image, Video, Phone, Send, Loader2, ShieldCheck, User,
   CheckCheck, Paperclip, Settings, Layers, Heart, Smile, Sparkles, Info,
-  Edit3, Volume2, VolumeX, Mic, Square, Play, Pause, Trash2, Check, X, MoreVertical, Copy, Reply
+  Edit3, Volume2, VolumeX, Mic, Square, Play, Pause, Trash2, Check, X, MoreVertical, Copy, Reply, Download
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import NicknameModal from './NicknameModal';
@@ -227,9 +227,36 @@ export default function ChatPanel({
       l.endsWith('.wav') ||
       l.endsWith('.m4a') ||
       l.endsWith('.ogg') ||
+      l.endsWith('.aac') ||
+      l.endsWith('.flac') ||
       l.includes('voicenote') ||
-      l.includes('audio') ||
-      l.includes('chat_uploads/')
+      l.includes('audio_')
+    );
+  };
+
+  const isVideoMedia = (url) => {
+    if (!url) return false;
+    const l = url.toLowerCase();
+    return (
+      l.endsWith('.mp4') ||
+      l.endsWith('.mov') ||
+      l.endsWith('.mkv') ||
+      l.endsWith('.avi') ||
+      l.includes('video_')
+    );
+  };
+
+  const isImageMedia = (url) => {
+    if (!url) return false;
+    const l = url.toLowerCase();
+    return (
+      l.endsWith('.jpg') ||
+      l.endsWith('.jpeg') ||
+      l.endsWith('.png') ||
+      l.endsWith('.gif') ||
+      l.endsWith('.webp') ||
+      l.includes('image_') ||
+      l.includes('photo_')
     );
   };
 
@@ -238,6 +265,45 @@ export default function ChatPanel({
     if (msg.media_url && isAudioMedia(msg.media_url)) return msg.media_url;
     if (msg.text_content && isAudioMedia(msg.text_content)) return msg.text_content;
     return null;
+  };
+
+  const getVideoUrl = (msg) => {
+    if (!msg) return null;
+    if (msg.media_url && isVideoMedia(msg.media_url)) return msg.media_url;
+    if (msg.text_content && isVideoMedia(msg.text_content)) return msg.text_content;
+    return null;
+  };
+
+  const getImageUrl = (msg) => {
+    if (!msg) return null;
+    if (msg.media_url && isImageMedia(msg.media_url)) return msg.media_url;
+    if (msg.text_content && isImageMedia(msg.text_content)) return msg.text_content;
+    if (msg.media_url && !isAudioMedia(msg.media_url) && !isVideoMedia(msg.media_url)) return msg.media_url;
+    return null;
+  };
+
+  const getMediaUrl = (msg) => {
+    return getAudioUrl(msg) || getVideoUrl(msg) || getImageUrl(msg);
+  };
+
+  const handleDownloadMedia = async (url) => {
+    if (!url) return;
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      const ext = url.split('.').pop()?.split('?')[0] || 'file';
+      a.download = `KMessenger_${Date.now()}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      console.warn('Direct fetch download failed, opening in new window:', err);
+      window.open(url, '_blank');
+    }
   };
 
   const handleCopyText = (msg) => {
@@ -806,6 +872,10 @@ export default function ChatPanel({
             }
 
             const audioUrl = getAudioUrl(msg);
+            const videoUrl = getVideoUrl(msg);
+            const imageUrl = getImageUrl(msg);
+            const mediaUrlForDownload = getMediaUrl(msg);
+
             const msgKey = String(msg.id || msg.temp_id || index);
             const isHighlighted = highlightedMsgId && String(highlightedMsgId) === msgKey;
 
@@ -872,17 +942,28 @@ export default function ChatPanel({
                     {/* Audio Voice Note Bubble */}
                     {audioUrl ? (
                       <AudioPlayerBubble src={audioUrl} isMe={isMe} />
-                    ) : msg.media_url ? (
-                      /* Media Image */
+                    ) : videoUrl ? (
+                      /* Inline Video Player */
+                      <div className="mb-2 overflow-hidden rounded-2xl border border-white/10 relative group/vid">
+                        <video
+                          src={videoUrl}
+                          controls
+                          playsInline
+                          preload="metadata"
+                          className="max-w-full max-h-72 rounded-2xl object-cover"
+                        />
+                      </div>
+                    ) : imageUrl ? (
+                      /* Photo Image */
                       <div
                         className="mb-2 overflow-hidden rounded-2xl border border-white/10 group/img cursor-pointer"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setLightboxImage(msg.media_url);
+                          setLightboxImage(imageUrl);
                         }}
                       >
                         <img
-                          src={msg.media_url}
+                          src={imageUrl}
                           alt="Shared media"
                           className="max-w-full max-h-72 object-cover rounded-2xl transition-transform duration-300 group-hover/img:scale-105"
                         />
@@ -915,8 +996,8 @@ export default function ChatPanel({
                         </button>
                       </div>
                     ) : (
-                      /* Text Content (only if not an audio player) */
-                      msg.text_content && msg.text_content !== audioUrl && (
+                      /* Text Content (only if not an audio, video, or image player) */
+                      msg.text_content && msg.text_content !== audioUrl && msg.text_content !== videoUrl && msg.text_content !== imageUrl && (
                         <p className="text-sm leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-medium">
                           {msg.text_content}
                         </p>
@@ -959,7 +1040,7 @@ export default function ChatPanel({
 
                   {/* Action Buttons & Dropdown Menu */}
                   <div className={`relative flex-shrink-0 self-center flex items-center gap-0.5 z-10 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
-                    {/* Quick Reply Button - Positioned closest to bubble */}
+                    {/* Quick Reply Button */}
                     <button
                       type="button"
                       onClick={(e) => {
@@ -998,7 +1079,7 @@ export default function ChatPanel({
                       <MoreVertical className="w-4 h-4" />
                     </button>
 
-                    {/* Dropdown Menu (Reactions, Copy, Edit, Unsend) */}
+                    {/* Dropdown Menu (Reactions, Reply, Download, Copy, Edit, Unsend) */}
                     {activeActionMsgId === msg.id && (
                       <div
                         className={`absolute z-50 w-56 sm:w-64 bg-[#18181b] border border-[#27272a] rounded-2xl shadow-2xl backdrop-blur-2xl p-2.5 space-y-2 animate-fadeIn ${
@@ -1031,7 +1112,7 @@ export default function ChatPanel({
                           </div>
                         </div>
 
-                        {/* Options: Reply, Copy Text, Edit & Unsend */}
+                        {/* Options: Reply, Download, Copy Text, Edit & Unsend */}
                         <div className="pt-1 border-t border-[#27272a] space-y-1">
                           <button
                             type="button"
@@ -1042,7 +1123,23 @@ export default function ChatPanel({
                             <span>Reply</span>
                           </button>
 
-                          {(msg.text_content || msg.media_url) && (
+                          {/* Download Media (Photos, Videos, Voice Notes) */}
+                          {mediaUrlForDownload && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleDownloadMedia(mediaUrlForDownload);
+                                setActiveActionMsgId(null);
+                              }}
+                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-emerald-400 hover:bg-emerald-950/30 transition-all cursor-pointer"
+                            >
+                              <Download className="w-4 h-4 text-emerald-400" />
+                              <span>Download Media</span>
+                            </button>
+                          )}
+
+                          {/* Copy Text (Only for actual text messages, NOT voice notes/media) */}
+                          {msg.text_content && !audioUrl && !videoUrl && !imageUrl && (
                             <button
                               type="button"
                               onClick={() => handleCopyText(msg)}

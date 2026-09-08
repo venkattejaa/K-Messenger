@@ -535,100 +535,10 @@ export default function VideoCallOverlay({
       {/* Floating Modern Call Controls Bar */}
       {isActive && (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
-          {/* Popover "More" Menu */}
-          {showMoreMenu && (
-            <div className="mb-3 bg-slate-900/95 border border-slate-700/80 rounded-2xl p-2 shadow-2xl backdrop-blur-2xl text-xs space-y-1 animate-fadeIn min-w-[190px]">
-              <div className="border-b border-slate-800 pb-1.5 mb-1 space-y-1">
-                <p className="text-[10px] uppercase tracking-wider font-extrabold text-slate-400 px-2 pt-1">
-                  Audio Output
-                </p>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    changeAudioRoute('earpiece');
-                    setShowMoreMenu(false);
-                  }}
-                  className={`w-full px-2.5 py-1.5 rounded-xl flex items-center justify-between font-semibold transition-colors ${
-                    audioRoute === 'earpiece' ? 'bg-indigo-600/90 text-white' : 'text-slate-300 hover:bg-slate-800'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Headphones className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>Ear Speaker (Proximity)</span>
-                  </div>
-                  {audioRoute === 'earpiece' && <Check className="w-3.5 h-3.5" />}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    changeAudioRoute('speaker');
-                    setShowMoreMenu(false);
-                  }}
-                  className={`w-full px-2.5 py-1.5 rounded-xl flex items-center justify-between font-semibold transition-colors ${
-                    audioRoute === 'speaker' ? 'bg-emerald-600/90 text-white' : 'text-slate-300 hover:bg-slate-800'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Loudspeaker</span>
-                  </div>
-                  {audioRoute === 'speaker' && <Check className="w-3.5 h-3.5" />}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    changeAudioRoute('bluetooth');
-                    setShowMoreMenu(false);
-                  }}
-                  className={`w-full px-2.5 py-1.5 rounded-xl flex items-center justify-between font-semibold transition-colors ${
-                    audioRoute === 'bluetooth' ? 'bg-purple-600/90 text-white' : 'text-slate-300 hover:bg-slate-800'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                    <span>Bluetooth Headset / Buds</span>
-                  </div>
-                  {audioRoute === 'bluetooth' && <Check className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-
-              {!isAudioCall && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFitMode(fitMode === 'contain' ? 'cover' : 'contain');
-                    setShowMoreMenu(false);
-                  }}
-                  className="w-full px-3 py-2 rounded-xl flex items-center gap-2 hover:bg-slate-800 text-slate-200 font-semibold transition-colors"
-                >
-                  <Crop className="w-4 h-4 text-purple-400" />
-                  <span>Mode: {fitMode === 'contain' ? 'Fit Video' : 'Fill Screen'}</span>
-                </button>
-              )}
-
-              {!isAudioCall && videoEnabled && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    togglePip();
-                    setShowMoreMenu(false);
-                  }}
-                  className="w-full px-3 py-2 rounded-xl flex items-center gap-2 hover:bg-slate-800 text-slate-200 font-semibold transition-colors"
-                >
-                  {pictureInPicture ? <Minimize2 className="w-4 h-4 text-pink-400" /> : <Maximize2 className="w-4 h-4 text-pink-400" />}
-                  <span>Picture-in-Picture</span>
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Primary Bottom Bar: Reverse Camera, Mute, Camera Off, End Call, Three Dots */}
-          <div className="glass-panel border border-slate-700/80 rounded-full px-4 sm:px-6 py-3 flex items-center gap-3 sm:gap-4 shadow-2xl shadow-slate-950/80 backdrop-blur-2xl">
+          {/* Primary Bottom Bar */}
+          <div className="glass-panel border border-slate-700/80 rounded-full px-5 sm:px-6 py-3 flex items-center gap-3 sm:gap-4 shadow-2xl shadow-slate-950/80 backdrop-blur-2xl">
             
-            {/* 1. Reverse / Flip Camera */}
+            {/* 1. Reverse / Flip Camera (Video calls only) */}
             {videoEnabled && !isAudioCall && (
               <button
                 type="button"
@@ -654,19 +564,21 @@ export default function VideoCallOverlay({
               {muted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
             </button>
 
-            {/* 3. Turn On/Off Camera */}
-            <button
-              type="button"
-              onClick={onToggleVideo}
-              className={`p-3 rounded-full transition-all cursor-pointer active:scale-95 ${
-                !videoEnabled
-                  ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/30'
-                  : 'bg-slate-800/80 hover:bg-slate-700 text-slate-200'
-              }`}
-              title={videoEnabled ? 'Turn Off Camera' : 'Turn On Camera'}
-            >
-              {!videoEnabled ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
-            </button>
+            {/* 3. Turn On/Off Camera (Video calls only) */}
+            {!isAudioCall && (
+              <button
+                type="button"
+                onClick={onToggleVideo}
+                className={`p-3 rounded-full transition-all cursor-pointer active:scale-95 ${
+                  !videoEnabled
+                    ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/30'
+                    : 'bg-slate-800/80 hover:bg-slate-700 text-slate-200'
+                }`}
+                title={videoEnabled ? 'Turn Off Camera' : 'Turn On Camera'}
+              >
+                {!videoEnabled ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
+              </button>
+            )}
 
             {/* 4. End Call Button (Prominent Red) */}
             <button
@@ -676,18 +588,6 @@ export default function VideoCallOverlay({
               title="End Call"
             >
               <PhoneOff className="w-6 h-6" />
-            </button>
-
-            {/* 5. Three Dots / More Options */}
-            <button
-              type="button"
-              onClick={() => setShowMoreMenu((prev) => !prev)}
-              className={`p-3 rounded-full transition-all cursor-pointer active:scale-95 ${
-                showMoreMenu ? 'bg-indigo-600 text-white' : 'bg-slate-800/80 hover:bg-slate-700 text-slate-200'
-              }`}
-              title="More Options"
-            >
-              <MoreVertical className="w-5 h-5" />
             </button>
 
           </div>
