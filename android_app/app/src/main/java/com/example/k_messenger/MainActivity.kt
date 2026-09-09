@@ -143,15 +143,58 @@ class WebAppInterface(private val context: Context) {
     @JavascriptInterface
     fun downloadFile(url: String, fileName: String) {
         try {
+            if (url.startsWith("data:")) {
+                saveBase64ToDownloads(url, fileName)
+                return
+            }
+
             val request = DownloadManager.Request(Uri.parse(url)).apply {
                 setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "$fileName.jpg")
-                setTitle("K-Messenger Download")
-                setDescription("Downloading memory...")
-                setMimeType("image/*")
+                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+                setTitle("K-Messenger")
+                setDescription("Downloading $fileName...")
+                val ext = fileName.substringAfterLast('.', "").lowercase()
+                val mime = when (ext) {
+                    "png" -> "image/png"
+                    "gif" -> "image/gif"
+                    "webp" -> "image/webp"
+                    "mp4" -> "video/mp4"
+                    "mov" -> "video/quicktime"
+                    "webm" -> "audio/webm"
+                    "mp3" -> "audio/mpeg"
+                    "wav" -> "audio/wav"
+                    "m4a" -> "audio/m4a"
+                    else -> "image/jpeg"
+                }
+                setMimeType(mime)
             }
             val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             dm.enqueue(request)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun saveBase64ToDownloads(dataUrl: String, fileName: String) {
+        try {
+            val parts = dataUrl.split(",")
+            if (parts.size < 2) return
+            val base64Data = parts[1]
+            val bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
+
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (!downloadsDir.exists()) downloadsDir.mkdirs()
+            val file = java.io.File(downloadsDir, fileName)
+            java.io.FileOutputStream(file).use { out ->
+                out.write(bytes)
+            }
+
+            android.media.MediaScannerConnection.scanFile(
+                context,
+                arrayOf(file.absolutePath),
+                null,
+                null
+            )
         } catch (e: Exception) {
             e.printStackTrace()
         }

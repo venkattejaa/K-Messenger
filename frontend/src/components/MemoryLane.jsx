@@ -40,33 +40,74 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
   const [expandedItem, setExpandedItem] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
 
-  // Download handler that works inside Android WebView
+  // Download handler that works inside Android WebView & Web Browsers
   const handleDownload = useCallback(async (url) => {
-    if (isDownloading) return;
+    if (!url || isDownloading) return;
     setIsDownloading(true);
     try {
-      // Try Android native download bridge first
+      // Determine file extension and MIME type
+      let ext = 'jpg';
+      let mimeType = 'image/jpeg';
+      const lowerUrl = url.toLowerCase();
+
+      if (lowerUrl.endsWith('.png') || lowerUrl.includes('image/png')) {
+        ext = 'png';
+        mimeType = 'image/png';
+      } else if (lowerUrl.endsWith('.gif') || lowerUrl.includes('image/gif')) {
+        ext = 'gif';
+        mimeType = 'image/gif';
+      } else if (lowerUrl.endsWith('.webp') || lowerUrl.includes('image/webp')) {
+        ext = 'webp';
+        mimeType = 'image/webp';
+      } else if (isVideoMedia(url)) {
+        ext = 'mp4';
+        mimeType = 'video/mp4';
+      } else if (isAudioMedia(url)) {
+        ext = lowerUrl.endsWith('.mp3') ? 'mp3' : 'webm';
+        mimeType = lowerUrl.endsWith('.mp3') ? 'audio/mpeg' : 'audio/webm';
+      }
+
+      const fileName = `K_memory_${Date.now()}.${ext}`;
+
+      // 1. Android Native Bridge
       if (window.AndroidNative && window.AndroidNative.downloadFile) {
-        window.AndroidNative.downloadFile(url, 'K_memory_' + Date.now());
+        window.AndroidNative.downloadFile(url, fileName);
         setIsDownloading(false);
         return;
       }
-      // Fallback: fetch blob and trigger browser download
-      const response = await fetch(url);
+
+      // 2. Data URL (Base64) Download
+      if (url.startsWith('data:')) {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setIsDownloading(false);
+        return;
+      }
+
+      // 3. Web Fetch & Blob Download Fallback
+      const response = await fetch(url, { mode: 'cors' });
       const blob = await response.blob();
-      const ext = url.split('.').pop()?.split('?')[0] || 'jpg';
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
-      a.download = `K_memory_${Date.now()}.${ext}`;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
     } catch (err) {
-      console.error('Download failed:', err);
-      // Last resort: open in new tab
-      window.open(url, '_blank');
+      console.warn('Direct blob fetch failed, triggering fallback download:', err);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `K_memory_${Date.now()}`;
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
     } finally {
       setIsDownloading(false);
     }
@@ -259,9 +300,19 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
                     </div>
                   )}
 
-                  {/* Hover overlay card */}
+                  {/* Hover overlay card with direct Save button */}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 p-3 flex flex-col justify-between">
-                    <div className="self-end">
+                    <div className="flex items-center justify-between">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownload(item.media_url);
+                        }}
+                        className="p-1.5 rounded-xl bg-pink-600/80 hover:bg-pink-500 backdrop-blur-md text-white shadow-md transition-transform active:scale-90"
+                        title="Save item"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                      </button>
                       <span className="p-1.5 rounded-xl bg-black/60 backdrop-blur-md text-white block shadow-md">
                         <Maximize2 className="w-3.5 h-3.5 text-pink-300" />
                       </span>
@@ -287,7 +338,16 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
                     <Mic className="w-3.5 h-3.5 text-pink-400" />
                     <span className="font-semibold text-slate-300">Voice Note</span>
                   </div>
-                  <span>{formatDate(item.timestamp)}</span>
+                  <div className="flex items-center gap-2">
+                    <span>{formatDate(item.timestamp)}</span>
+                    <button
+                      onClick={() => handleDownload(item.media_url)}
+                      className="p-1 rounded-lg bg-[#27272a] hover:bg-pink-600 text-slate-300 hover:text-white transition-colors"
+                      title="Save voice note"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
                 <audio controls src={item.media_url} className="w-full h-8 mt-1 rounded-lg" />
               </div>
@@ -296,7 +356,7 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
         )}
       </div>
 
-      {/* Lightbox Expanded Modal - rendered via portal at document root to avoid z-index/overflow clipping */}
+      {/* Lightbox Expanded Modal - rendered via portal at document root */}
       {expandedItem && createPortal(
         <div
           className="fixed inset-0 bg-slate-950/95 backdrop-blur-2xl flex items-center justify-center p-4 md:p-8 animate-fadeIn"
@@ -319,14 +379,14 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
                 <button
                   onClick={(e) => { e.stopPropagation(); handleDownload(expandedItem.media_url); }}
                   disabled={isDownloading}
-                  className="p-2 rounded-xl bg-[#18181b] border border-slate-800 text-slate-200 hover:text-white hover:bg-slate-800 transition-colors text-xs flex items-center gap-1.5 font-medium cursor-pointer disabled:opacity-50"
+                  className="p-2 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 text-white hover:from-pink-500 hover:to-purple-500 shadow-md transition-all text-xs flex items-center gap-1.5 font-bold cursor-pointer disabled:opacity-50 active:scale-95"
                 >
                   {isDownloading ? (
-                    <Loader2 className="w-4 h-4 text-pink-400 animate-spin" />
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
                   ) : (
-                    <Download className="w-4 h-4 text-pink-400" />
+                    <Download className="w-4 h-4 text-white" />
                   )}
-                  {isDownloading ? 'Saving...' : 'Save'}
+                  {isDownloading ? 'Saving...' : 'Save File'}
                 </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); setExpandedItem(null); }}
