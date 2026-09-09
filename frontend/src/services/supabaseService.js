@@ -320,13 +320,15 @@ export const apiGetMessages = async (userId = null, partnerId = null) => {
 
     if (effectiveUserId && effectivePartnerId) {
       query = query.in('sender_id', [effectiveUserId, effectivePartnerId]);
-    } else if (effectiveUserId) {
-      query = query.or(`sender_id.eq.${effectiveUserId},sender_id.neq.${effectiveUserId}`);
     }
 
     const { data, error } = await query;
 
-    if (error || !data) return [];
+    if (error) {
+      console.error('Error fetching messages from Supabase:', error);
+      return [];
+    }
+    if (!data) return [];
     
     // Safely filter internal system settings in JS so NULL text_content media messages are not dropped by SQL
     const validData = data.filter((m) => !m.text_content || !m.text_content.startsWith('USER_SETTING:'));
