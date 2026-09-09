@@ -37,11 +37,29 @@ function formatTime(iso) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function isVideoMedia(url) {
+  if (!url) return false;
+  const l = url.toLowerCase().split('?')[0];
+  if (l.includes('voicenote') || l.includes('voice_') || l.includes('audio_') || l.includes('data:audio')) return false;
+  return (
+    l.endsWith('.mp4') ||
+    l.endsWith('.mov') ||
+    l.endsWith('.webm') ||
+    l.endsWith('.mkv') ||
+    l.endsWith('.avi') ||
+    l.endsWith('.ogv') ||
+    l.endsWith('.3gp') ||
+    l.includes('video_') ||
+    l.includes('video/') ||
+    l.includes('video')
+  );
+}
+
 function isAudioMedia(url) {
   if (!url) return false;
   const l = url.toLowerCase().split('?')[0];
+  if (isVideoMedia(url)) return false;
   return (
-    l.endsWith('.webm') ||
     l.endsWith('.mp3') ||
     l.endsWith('.wav') ||
     l.endsWith('.m4a') ||
@@ -53,20 +71,7 @@ function isAudioMedia(url) {
     l.includes('voice_') ||
     l.includes('audio_') ||
     l.includes('audio/') ||
-    l.includes('audio') ||
     l.includes('data:audio')
-  );
-}
-
-function isVideoMedia(url) {
-  if (!url) return false;
-  const l = url.toLowerCase().split('?')[0];
-  return (
-    l.endsWith('.mp4') ||
-    l.endsWith('.mov') ||
-    l.endsWith('.mkv') ||
-    l.endsWith('.avi') ||
-    l.includes('video_')
   );
 }
 
@@ -309,6 +314,95 @@ function AudioPlayerBubble({ src, isMe }) {
   );
 }
 
+function VideoPlayerBubble({ src, onExpand }) {
+  const videoRef = useRef(null);
+
+  const toggleNativeFullscreen = (e) => {
+    if (e) e.stopPropagation();
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.requestFullscreen) {
+      v.requestFullscreen().catch(() => {
+        if (onExpand) onExpand();
+      });
+    } else if (v.webkitRequestFullscreen) {
+      v.webkitRequestFullscreen();
+    } else if (v.webkitEnterFullscreen) {
+      v.webkitEnterFullscreen();
+    } else if (onExpand) {
+      onExpand();
+    }
+  };
+
+  return (
+    <div className="mb-2 overflow-hidden rounded-2xl border border-white/10 relative group/vid">
+      <video
+        ref={videoRef}
+        src={src}
+        controls
+        playsInline
+        preload="metadata"
+        className="max-w-full max-h-72 rounded-2xl object-cover"
+      />
+      <div className="absolute top-2 right-2 flex items-center gap-1 z-10 pointer-events-auto">
+        <button
+          type="button"
+          onClick={toggleNativeFullscreen}
+          className="p-1.5 rounded-xl bg-black/70 backdrop-blur-md text-white hover:bg-black/90 transition-all cursor-pointer shadow-md flex items-center gap-1 text-[11px] font-semibold"
+          title="Full Screen Video"
+        >
+          <Maximize2 className="w-3.5 h-3.5 text-pink-300" />
+          <span className="hidden sm:inline">Fullscreen</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function LightboxVideoPlayer({ src }) {
+  const videoRef = useRef(null);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.play().catch((err) => console.log('Autoplay handled:', err));
+    }
+  }, [src]);
+
+  const handleNativeFullscreen = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.requestFullscreen) {
+      v.requestFullscreen();
+    } else if (v.webkitRequestFullscreen) {
+      v.webkitRequestFullscreen();
+    } else if (v.webkitEnterFullscreen) {
+      v.webkitEnterFullscreen();
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 max-w-full max-h-[85vh]">
+      <video
+        ref={videoRef}
+        src={src}
+        controls
+        playsInline
+        autoPlay
+        preload="auto"
+        className="max-w-full max-h-[75vh] rounded-2xl shadow-2xl"
+      />
+      <button
+        type="button"
+        onClick={handleNativeFullscreen}
+        className="px-4 py-2 rounded-full bg-gradient-to-r from-pink-600 to-purple-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-xl transition-all active:scale-95 cursor-pointer border border-white/20"
+      >
+        <Maximize2 className="w-4 h-4" />
+        <span>Full Screen View</span>
+      </button>
+    </div>
+  );
+}
+
 // Memoized Individual Message Card Component to eliminate re-rendering 600+ DOM nodes
 const MessageItem = memo(function MessageItem({
   msg,
@@ -348,12 +442,10 @@ const MessageItem = memo(function MessageItem({
   const reactionEntries = Object.entries(rawReactions);
   const isEditing = editingMsgId === msg.id;
 
-  // Filter out WebRTC CALL_SIGNAL messages
   if (msg.text_content && msg.text_content.startsWith('CALL_SIGNAL:')) {
     return null;
   }
 
-  // Render Call History System Record
   if (msg.text_content && msg.text_content.startsWith('CALL_RECORD:')) {
     const parts = msg.text_content.split(':');
     const cType = parts[1] || 'video';
@@ -488,26 +580,10 @@ const MessageItem = memo(function MessageItem({
           {audioUrl ? (
             <AudioPlayerBubble src={audioUrl} isMe={isMe} />
           ) : videoUrl ? (
-            <div className="mb-2 overflow-hidden rounded-2xl border border-white/10 relative group/vid cursor-pointer">
-              <video
-                src={videoUrl}
-                controls
-                playsInline
-                preload="metadata"
-                className="max-w-full max-h-72 rounded-2xl object-cover"
-              />
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setLightboxMedia({ url: videoUrl, type: 'video' });
-                }}
-                className="absolute top-2 right-2 p-1.5 rounded-xl bg-black/60 backdrop-blur-md text-white hover:bg-black/80 transition-all cursor-pointer opacity-90 hover:opacity-100 shadow-md"
-                title="Expand Video Full Screen"
-              >
-                <Maximize2 className="w-4 h-4 text-pink-300" />
-              </button>
-            </div>
+            <VideoPlayerBubble
+              src={videoUrl}
+              onExpand={() => setLightboxMedia({ url: videoUrl, type: 'video' })}
+            />
           ) : imageUrl ? (
             <div
               className="mb-2 overflow-hidden rounded-2xl border border-white/10 group/img cursor-pointer relative"
@@ -837,7 +913,6 @@ const ChatInputBar = memo(function ChatInputBar({
 
   return (
     <div className="p-2.5 sm:p-4 px-3 sm:px-6 pb-3 sm:pb-5 relative z-10 sticky bottom-0 bg-[#0B0F17] flex-shrink-0">
-      {/* Realtime Partner Typing Indicator */}
       {isPartnerTyping && (
         <div className="mb-2 px-4 py-1.5 rounded-full bg-[#18181b]/95 border border-pink-500/40 w-fit flex items-center gap-2 shadow-lg animate-fadeIn backdrop-blur-md">
           <div className="flex items-center gap-1">
@@ -851,7 +926,6 @@ const ChatInputBar = memo(function ChatInputBar({
         </div>
       )}
 
-      {/* Reply Preview Header above input bar */}
       {replyingToMsg && (
         <div className="mb-2 px-4 py-2 rounded-2xl bg-[#18181b]/95 border border-[#27272a] shadow-xl flex items-center justify-between gap-3 animate-fadeIn backdrop-blur-md">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -960,7 +1034,6 @@ const ChatInputBar = memo(function ChatInputBar({
                   }, 2500);
                 }
 
-                // Highly optimized native zero-thrashing height adjustment
                 const target = e.target;
                 if (!val) {
                   target.style.height = 'auto';
@@ -1183,7 +1256,6 @@ export default function ChatPanel({
     setActiveActionMsgId(null);
   }, []);
 
-  // Touch Long-press & Popover Placement
   const [popoverPlacement, setPopoverPlacement] = useState('up');
   const touchTimerRef = useRef(null);
 
@@ -1225,7 +1297,6 @@ export default function ChatPanel({
     }
   }, []);
 
-  // Mute Notifications State
   const [isMuted, setIsMuted] = useState(() => {
     if (!currentUserId) return localStorage.getItem('kmessenger_muted_notifications') === 'true';
     const stored = localStorage.getItem(`kmessenger_muted_${currentUserId}`);
@@ -1336,7 +1407,6 @@ export default function ChatPanel({
     prevMessagesLengthRef.current = messages.length;
   }, [messages, currentUserId, isMuted, partnerUser, customNickname, defaultPartnerName, partnerIdNum]);
 
-  // Voice Recorder Methods
   const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1791,13 +1861,7 @@ export default function ChatPanel({
             onClick={(e) => e.stopPropagation()}
           >
             {lightboxMedia.type === 'video' ? (
-              <video
-                src={lightboxMedia.url}
-                controls
-                autoPlay
-                playsInline
-                className="max-w-full max-h-[85vh] rounded-2xl shadow-2xl"
-              />
+              <LightboxVideoPlayer src={lightboxMedia.url} />
             ) : (
               <img
                 src={lightboxMedia.url}
