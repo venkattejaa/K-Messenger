@@ -39,11 +39,47 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
   const [activeTab, setActiveTab] = useState('visual'); // 'visual' (photos & videos) or 'audio' (voice notes)
   const [expandedItem, setExpandedItem] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadToast, setDownloadToast] = useState('');
+
+  const showToast = (msg) => {
+    setDownloadToast(msg);
+    setTimeout(() => setDownloadToast(''), 3500);
+  };
+
+  const closeExpandedItem = useCallback(() => {
+    setExpandedItem(null);
+  }, []);
+
+  // Handle hardware Back button on Android & Escape key for lightbox
+  useEffect(() => {
+    if (!expandedItem) return;
+
+    window.history.pushState({ modal: 'memory_lightbox' }, '');
+
+    const handlePopState = () => {
+      setExpandedItem(null);
+    };
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setExpandedItem(null);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [expandedItem]);
 
   // Download handler that works inside Android WebView & Web Browsers
   const handleDownload = useCallback(async (url) => {
     if (!url || isDownloading) return;
     setIsDownloading(true);
+    showToast('Starting download...');
     try {
       // Determine file extension and MIME type
       let ext = 'jpg';
@@ -72,6 +108,7 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
       // 1. Android Native Bridge
       if (window.AndroidNative && window.AndroidNative.downloadFile) {
         window.AndroidNative.downloadFile(url, fileName);
+        showToast('Saved to Downloads folder!');
         setIsDownloading(false);
         return;
       }
@@ -84,6 +121,7 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
+        showToast('Saved to Downloads!');
         setIsDownloading(false);
         return;
       }
@@ -99,6 +137,7 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
       a.click();
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+      showToast('Saved to Downloads!');
     } catch (err) {
       console.warn('Direct blob fetch failed, triggering fallback download:', err);
       const a = document.createElement('a');
@@ -108,6 +147,7 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      showToast('Downloading file...');
     } finally {
       setIsDownloading(false);
     }
@@ -158,8 +198,23 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
   const visualCount = items.filter((i) => !isAudioMedia(i.media_url)).length;
   const audioCount = items.filter((i) => isAudioMedia(i.media_url)).length;
 
+  const handleCloseModal = (e) => {
+    if (e) {
+      if (e.stopPropagation) e.stopPropagation();
+      if (e.preventDefault) e.preventDefault();
+    }
+    setExpandedItem(null);
+  };
+
   return (
     <div className="flex flex-col h-full bg-[#0B0F17] border-r border-[#262626] backdrop-blur-2xl relative font-sans">
+      {/* Toast Notification */}
+      {downloadToast && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[100005] px-4 py-2.5 rounded-2xl bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold text-xs shadow-2xl border border-white/20 animate-bounce">
+          {downloadToast}
+        </div>
+      )}
+
       {/* Ambient background glow */}
       <div className="absolute top-10 left-5 w-72 h-72 bg-purple-900/10 rounded-full blur-[100px] pointer-events-none" />
 
@@ -361,13 +416,22 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
         <div
           className="fixed inset-0 bg-slate-950/95 backdrop-blur-2xl flex items-center justify-center p-4 md:p-8 animate-fadeIn"
           style={{ zIndex: 99999 }}
-          onClick={() => setExpandedItem(null)}
-          onTouchEnd={(e) => { if (e.target === e.currentTarget) setExpandedItem(null); }}
+          onClick={handleCloseModal}
+          onTouchStart={(e) => { if (e.target === e.currentTarget) handleCloseModal(e); }}
         >
+          {/* Pinned Big Red Touch Close Button */}
+          <button
+            onClick={handleCloseModal}
+            onTouchStart={handleCloseModal}
+            className="fixed top-4 right-4 z-[100001] p-3 rounded-full bg-red-600/90 hover:bg-red-500 text-white shadow-2xl transition-all active:scale-90 cursor-pointer flex items-center justify-center border border-white/20"
+            title="Close Preview"
+          >
+            <X className="w-6 h-6 stroke-[3]" />
+          </button>
+
           <div
             className="relative max-w-4xl max-h-[90vh] w-full bg-[#121212] border border-[#27272a] rounded-3xl overflow-hidden shadow-2xl flex flex-col"
             onClick={(e) => e.stopPropagation()}
-            onTouchEnd={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
             <div className="p-4 border-b border-[#27272a] flex items-center justify-between bg-[#0B0F17]">
@@ -375,7 +439,7 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
                 <Calendar className="w-4 h-4 text-pink-400" />
                 <span>{new Date(expandedItem.timestamp).toLocaleString()}</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 pr-12 sm:pr-0">
                 <button
                   onClick={(e) => { e.stopPropagation(); handleDownload(expandedItem.media_url); }}
                   disabled={isDownloading}
@@ -389,8 +453,10 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
                   {isDownloading ? 'Saving...' : 'Save File'}
                 </button>
                 <button
-                  onClick={(e) => { e.stopPropagation(); setExpandedItem(null); }}
+                  onClick={handleCloseModal}
+                  onTouchStart={handleCloseModal}
                   className="p-2 rounded-xl bg-[#18181b] border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                  title="Close"
                 >
                   <X className="w-4 h-4" />
                 </button>

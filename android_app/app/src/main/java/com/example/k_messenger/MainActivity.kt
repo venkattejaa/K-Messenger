@@ -25,6 +25,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
+import android.widget.Toast
+import android.app.Activity
+
 class WebAppInterface(private val context: Context) {
 
     @JavascriptInterface
@@ -143,6 +146,10 @@ class WebAppInterface(private val context: Context) {
     @JavascriptInterface
     fun downloadFile(url: String, fileName: String) {
         try {
+            (context as? Activity)?.runOnUiThread {
+                Toast.makeText(context, "Downloading $fileName to Downloads folder...", Toast.LENGTH_SHORT).show()
+            }
+
             if (url.startsWith("data:")) {
                 saveBase64ToDownloads(url, fileName)
                 return
@@ -167,11 +174,16 @@ class WebAppInterface(private val context: Context) {
                     else -> "image/jpeg"
                 }
                 setMimeType(mime)
+                setAllowedOverRoaming(true)
+                setAllowedOverMetered(true)
             }
             val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             dm.enqueue(request)
         } catch (e: Exception) {
             e.printStackTrace()
+            (context as? Activity)?.runOnUiThread {
+                Toast.makeText(context, "Download failed: ${e.message}", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -195,8 +207,14 @@ class WebAppInterface(private val context: Context) {
                 null,
                 null
             )
+            (context as? Activity)?.runOnUiThread {
+                Toast.makeText(context, "Saved to Downloads folder!", Toast.LENGTH_SHORT).show()
+            }
         } catch (e: Exception) {
             e.printStackTrace()
+            (context as? Activity)?.runOnUiThread {
+                Toast.makeText(context, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
+            }
         }
     }
 }

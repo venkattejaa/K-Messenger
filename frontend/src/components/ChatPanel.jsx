@@ -1403,16 +1403,18 @@ export default function ChatPanel({
           className="fixed inset-0 bg-slate-950/90 backdrop-blur-2xl flex items-center justify-center p-4"
           style={{ zIndex: 99999 }}
           onClick={() => setLightboxImage(null)}
-          onTouchEnd={(e) => { if (e.target === e.currentTarget) setLightboxImage(null); }}
+          onTouchStart={(e) => { if (e.target === e.currentTarget) setLightboxImage(null); }}
         >
           <button
             onClick={(e) => { e.stopPropagation(); setLightboxImage(null); }}
-            className="absolute top-4 right-4 p-2 rounded-xl bg-[#18181b] border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            onTouchStart={(e) => { e.stopPropagation(); setLightboxImage(null); }}
+            className="fixed top-4 right-4 p-3 rounded-full bg-red-600/90 hover:bg-red-500 text-white shadow-2xl transition-all cursor-pointer border border-white/20"
             style={{ zIndex: 100000 }}
+            title="Close"
           >
-            <X className="w-5 h-5" />
+            <X className="w-6 h-6 stroke-[3]" />
           </button>
-          <div className="relative max-w-4xl max-h-[90vh]" onClick={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}>
+          <div className="relative max-w-4xl max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
             <img src={lightboxImage} alt="Enlarged shared media" className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl" draggable={false} />
           </div>
         </div>,
