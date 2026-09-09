@@ -133,13 +133,6 @@ function AudioPlayerBubble({ src, isMe }) {
     </div>
   );
 }
-          <span>{formatSeconds(currentTime)}</span>
-          <span>{duration > 0 ? formatSeconds(duration) : 'Voice note'}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export default function ChatPanel({
   messages,
