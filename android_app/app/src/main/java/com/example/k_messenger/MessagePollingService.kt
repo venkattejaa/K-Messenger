@@ -66,11 +66,12 @@ class MessagePollingService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        return NotificationCompat.Builder(this, "kmessenger_bg_messages_channel")
-            .setContentTitle("K-Messenger")
-            .setContentText("K-Messenger is keeping you connected")
+        return NotificationCompat.Builder(this, "kmessenger_bg_service_channel")
+            .setContentTitle("K-Messenger Sync")
+            .setContentText("Active in background")
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setShowWhen(false)
             .setContentIntent(pendingIntent)
             .build()
     }
@@ -78,6 +79,15 @@ class MessagePollingService : Service() {
     private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+            val serviceChannel = NotificationChannel(
+                "kmessenger_bg_service_channel",
+                "Background Service Sync",
+                NotificationManager.IMPORTANCE_MIN
+            ).apply {
+                description = "Background sync status"
+                setShowBadge(false)
+            }
             
             val msgChannel = NotificationChannel(
                 "kmessenger_bg_messages_channel",
@@ -99,6 +109,7 @@ class MessagePollingService : Service() {
                 vibrationPattern = longArrayOf(500, 200, 500, 200, 500)
             }
             
+            notificationManager.createNotificationChannel(serviceChannel)
             notificationManager.createNotificationChannel(msgChannel)
             notificationManager.createNotificationChannel(callChannel)
         }
@@ -186,11 +197,12 @@ class MessagePollingService : Service() {
         val channelId = if (isCall) "kmessenger_bg_calls_channel" else "kmessenger_bg_messages_channel"
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        val intent = Intent(this, MainActivity::class.java).apply {
+        val mainIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            if (isCall) putExtra("action", "ANSWER_CALL")
         }
-        val pendingIntent = PendingIntent.getActivity(
-            this, id, intent,
+        val mainPendingIntent = PendingIntent.getActivity(
+            this, id, mainIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -198,14 +210,69 @@ class MessagePollingService : Service() {
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(title)
             .setContentText(body)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(if (isCall) NotificationCompat.CATEGORY_CALL else NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
+            .setContentIntent(mainPendingIntent)
             .setVibrate(if (isCall) longArrayOf(500, 200, 500, 200, 500) else longArrayOf(200, 100, 200))
 
         if (isCall) {
             builder.setOngoing(true)
+            builder.setFullScreenIntent(mainPendingIntent, true)
+
+            // Answer Action
+            val answerAction = NotificationCompat.Action.Builder(
+                0, "Answer", mainPendingIntent
+            ).build()
+            builder.addAction(answerAction)
+
+            // Decline Action
+            val declineIntent = Intent(this, NotificationActionReceiver::class.java).apply {
+                action = NotificationActionReceiver.ACTION_DECLINE_CALL
+                putExtra(NotificationActionReceiver.EXTRA_NOTIFICATION_ID, id)
+            }
+            val declinePendingIntent = PendingIntent.getBroadcast(
+                this, id + 9000, declineIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val declineAction = NotificationCompat.Action.Builder(
+                0, "Decline", declinePendingIntent
+            ).build()
+            builder.addAction(declineAction)
+        } else {
+            // Message Direct Reply Action
+            val replyRemoteInput = androidx.core.app.RemoteInput.Builder(NotificationActionReceiver.KEY_TEXT_REPLY)
+                .setLabel("Type a reply...")
+                .build()
+
+            val replyIntent = Intent(this, NotificationActionReceiver::class.java).apply {
+                action = NotificationActionReceiver.ACTION_REPLY
+                putExtra(NotificationActionReceiver.EXTRA_NOTIFICATION_ID, id)
+            }
+            val replyPendingIntent = PendingIntent.getBroadcast(
+                this, id + 1000, replyIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            )
+            val replyAction = NotificationCompat.Action.Builder(
+                0, "Reply", replyPendingIntent
+            ).addRemoteInput(replyRemoteInput).build()
+            builder.addAction(replyAction)
+
+            // Message Like Action (❤️)
+            val likeIntent = Intent(this, NotificationActionReceiver::class.java).apply {
+                action = NotificationActionReceiver.ACTION_LIKE
+                putExtra(NotificationActionReceiver.EXTRA_MESSAGE_ID, id)
+                putExtra(NotificationActionReceiver.EXTRA_NOTIFICATION_ID, id)
+            }
+            val likePendingIntent = PendingIntent.getBroadcast(
+                this, id + 2000, likeIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val likeAction = NotificationCompat.Action.Builder(
+                0, "❤️ Like", likePendingIntent
+            ).build()
+            builder.addAction(likeAction)
         }
 
         notificationManager.notify(id, builder.build())

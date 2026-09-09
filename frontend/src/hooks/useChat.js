@@ -15,33 +15,48 @@ import { getWsUrl } from '../config';
 export function useChat(userId, clientId, onSignal, partnerId = null) {
   const [messages, setMessages] = useState([]);
   const [onlineUserIds, setOnlineUserIds] = useState([]);
+  const [isPartnerTyping, setIsPartnerTyping] = useState(false);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState(null);
   const wsRef = useRef(null);
   const realtimeChannelRef = useRef(null);
   const signalChannelRef = useRef(null);
   const presenceChannelRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
   const onSignalRef = useRef(onSignal);
 
   useEffect(() => {
     onSignalRef.current = onSignal;
   }, [onSignal]);
 
+  // Clear native Android notifications when viewing chat
+  const clearNativeNotifications = useCallback(() => {
+    if (window.AndroidNative && typeof window.AndroidNative.clearAllNotifications === 'function') {
+      try {
+        window.AndroidNative.clearAllNotifications();
+      } catch (e) {
+        console.error('Failed to clear native notifications:', e);
+      }
+    }
+  }, []);
+
   // Fetch initial messages history
   const fetchMessages = useCallback(async () => {
     try {
       const msgs = await apiGetMessages(userId, partnerId);
       setMessages(msgs);
+      clearNativeNotifications();
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     }
-  }, [userId, partnerId]);
+  }, [userId, partnerId, clearNativeNotifications]);
 
   const markAllSeen = useCallback(async (targetPartnerId) => {
     const pId = targetPartnerId || partnerId || (userId === 1 ? 2 : userId === 2 ? 1 : userId === 3 ? 4 : userId === 4 ? 3 : null);
     if (!userId || !pId) return;
     await apiMarkAllSeen(pId, userId);
-  }, [userId, partnerId]);
+    clearNativeNotifications();
+  }, [userId, partnerId, clearNativeNotifications]);
 
   // --- SUPABASE REALTIME SUBSCRIPTION MODE ---
   const connectSupabaseRealtime = useCallback(() => {
@@ -104,7 +119,7 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
 
     realtimeChannelRef.current = msgChannel;
 
-    // 2. Broadcast Channel for WebRTC Video & Voice Calling Signals (Isolated per conversation pair)
+    // 2. Broadcast Channel for WebRTC Video & Voice Calling Signals and Typing Status (Isolated per conversation pair)
     const effectivePartnerId = partnerId || (userId ? (userId === 1 ? 2 : userId === 2 ? 1 : userId === 3 ? 4 : userId === 4 ? 3 : null) : null);
     const callRoomName = (userId && effectivePartnerId) ? `call_room_${Math.min(userId, effectivePartnerId)}_${Math.max(userId, effectivePartnerId)}` : 'call_room';
     const sigChannel = supabase
@@ -114,6 +129,15 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
           if (payload.target_user_id && Number(payload.target_user_id) !== Number(userId)) return;
           if (payload.sender_id && effectivePartnerId && Number(payload.sender_id) !== Number(effectivePartnerId)) return;
           onSignalRef.current(payload.signal_type, payload.data, payload.from_client_id);
+        }
+      })
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        if (payload && payload.sender_id && Number(payload.sender_id) === Number(effectivePartnerId)) {
+          setIsPartnerTyping(Boolean(payload.is_typing));
+          if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+          if (payload.is_typing) {
+            typingTimeoutRef.current = setTimeout(() => setIsPartnerTyping(false), 3000);
+          }
         }
       })
       .subscribe();
@@ -324,20 +348,32 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
     }
   }, []);
 
-  const editMessage = useCallback(async (messageId, newText) => {
-    if (isSupabaseConfigured()) {
-      await apiEditMessage(messageId, newText);
-    }
-  }, []);
+  const sendTypingStatus = useCallback(
+    (isTyping) => {
+      if (isSupabaseConfigured() && signalChannelRef.current) {
+        signalChannelRef.current.send({
+          type: 'broadcast',
+          event: 'typing',
+          payload: {
+            is_typing: isTyping,
+            sender_id: userId,
+          },
+        });
+      }
+    },
+    [userId]
+  );
 
   return {
     messages,
     onlineUserIds,
+    isPartnerTyping,
     connected,
     error,
     sendChatMessage,
     reactMessage,
     sendSignal,
+    sendTypingStatus,
     clearMessages,
     unsendMessage,
     editMessage,

@@ -7,10 +7,12 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -41,6 +43,7 @@ class WebAppInterface(private val context: Context) {
 
             val intent = Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                if (isCall) putExtra("action", "ANSWER_CALL")
             }
             val pendingIntent = PendingIntent.getActivity(
                 context, 0, intent,
@@ -51,7 +54,8 @@ class WebAppInterface(private val context: Context) {
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle(title)
                 .setContentText(body)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setCategory(if (isCall) NotificationCompat.CATEGORY_CALL else NotificationCompat.CATEGORY_MESSAGE)
                 .setAutoCancel(true)
                 .setContentIntent(pendingIntent)
@@ -59,6 +63,7 @@ class WebAppInterface(private val context: Context) {
 
             if (isCall) {
                 builder.setOngoing(true)
+                builder.setFullScreenIntent(pendingIntent, true)
             }
 
             val notifId = tag.hashCode()
@@ -73,6 +78,16 @@ class WebAppInterface(private val context: Context) {
         try {
             val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             notificationManager.cancel(tag.hashCode())
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    @JavascriptInterface
+    fun clearAllNotifications() {
+        try {
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.cancelAll()
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -126,8 +141,31 @@ class WebAppInterface(private val context: Context) {
 class MainActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
     private val APP_URL = "https://frontend-delta-blue-46.vercel.app"
+
+    private val fileChooserLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (filePathCallback != null) {
+            val intent = result.data
+            var results: Array<Uri>? = null
+            if (result.resultCode == RESULT_OK) {
+                if (intent != null) {
+                    val dataString = intent.dataString
+                    val clipData = intent.clipData
+                    if (clipData != null) {
+                        results = Array(clipData.itemCount) { i -> clipData.getItemAt(i).uri }
+                    } else if (dataString != null) {
+                        results = arrayOf(Uri.parse(dataString))
+                    }
+                }
+            }
+            filePathCallback?.onReceiveValue(results)
+            filePathCallback = null
+        }
+    }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -172,6 +210,28 @@ class MainActivity : ComponentActivity() {
                     request?.grant(request.resources)
                 }
             }
+
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?
+            ): Boolean {
+                this@MainActivity.filePathCallback?.onReceiveValue(null)
+                this@MainActivity.filePathCallback = filePathCallback
+
+                val intent = fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                    type = "*/*"
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                }
+
+                try {
+                    fileChooserLauncher.launch(intent)
+                } catch (e: Exception) {
+                    this@MainActivity.filePathCallback = null
+                    return false
+                }
+                return true
+            }
         }
     }
 
@@ -211,6 +271,11 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         MessagePollingService.isAppForeground = true
         stopService(Intent(this, MessagePollingService::class.java))
+        try {
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancelAll()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         webView.evaluateJavascript("window.__refetchMessages && window.__refetchMessages()", null)
     }
 

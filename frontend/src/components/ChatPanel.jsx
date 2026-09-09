@@ -59,8 +59,21 @@ function AudioPlayerBubble({ src, isMe }) {
 
   const updateDurationFromAudio = () => {
     if (audioRef.current) {
-      const dur = audioRef.current.duration;
-      if (dur && isFinite(dur) && !isNaN(dur) && dur > 0) {
+      let dur = audioRef.current.duration;
+      if (dur === Infinity || isNaN(dur) || !isFinite(dur)) {
+        // WebM blob duration calculation fix: seek to end to read true duration
+        audioRef.current.currentTime = 1e101;
+        audioRef.current.ontimeupdate = () => {
+          audioRef.current.ontimeupdate = handleTimeUpdate;
+          const realDur = audioRef.current.duration;
+          if (realDur && isFinite(realDur) && !isNaN(realDur) && realDur > 0) {
+            setDuration(realDur);
+          } else {
+            setDuration(audioRef.current.currentTime || 0);
+          }
+          audioRef.current.currentTime = 0;
+        };
+      } else if (dur && dur > 0) {
         setDuration(dur);
       }
     }
@@ -156,6 +169,8 @@ export default function ChatPanel({
   onMarkAllSeen,
   onToggleMemoryLane,
   showMemoryLane,
+  isPartnerTyping,
+  onSendTypingStatus,
 }) {
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -1215,6 +1230,20 @@ export default function ChatPanel({
 
       {/* Instagram Pill Input Bar with Voice Note Controls */}
       <div className="p-2.5 sm:p-4 px-3 sm:px-6 pb-3 sm:pb-5 relative z-10 sticky bottom-0 bg-[#0B0F17] flex-shrink-0">
+        {/* Realtime Partner Typing Indicator */}
+        {isPartnerTyping && (
+          <div className="mb-2 px-4 py-1.5 rounded-full bg-[#18181b]/95 border border-pink-500/40 w-fit flex items-center gap-2 shadow-lg animate-fadeIn backdrop-blur-md">
+            <div className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+              <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+              <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+            </div>
+            <span className="text-xs font-semibold text-pink-300">
+              {partnerDisplayName} is typing...
+            </span>
+          </div>
+        )}
+
         {/* Reply Preview Header above input bar */}
         {replyingToMsg && (
           <div className="mb-2 px-4 py-2 rounded-2xl bg-[#18181b]/95 border border-[#27272a] shadow-xl flex items-center justify-between gap-3 animate-fadeIn backdrop-blur-md">
@@ -1305,6 +1334,7 @@ export default function ChatPanel({
                 value={newMessage}
                 onChange={(e) => {
                   setNewMessage(e.target.value);
+                  if (onSendTypingStatus) onSendTypingStatus(true);
                   e.target.style.height = 'auto';
                   e.target.style.height = `${Math.min(e.target.scrollHeight, 110)}px`;
                 }}

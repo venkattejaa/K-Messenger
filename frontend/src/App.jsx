@@ -76,11 +76,13 @@ function App() {
   const {
     messages,
     onlineUserIds,
+    isPartnerTyping,
     connected,
     error: chatError,
     sendChatMessage,
     reactMessage,
     sendSignal,
+    sendTypingStatus,
     clearMessages,
     unsendMessage,
     editMessage,
@@ -303,6 +305,8 @@ function App() {
               onUnsendMessage={unsendMessage}
               onEditMessage={editMessage}
               onMarkAllSeen={() => markAllSeen(partnerUser?.user_id)}
+              isPartnerTyping={isPartnerTyping}
+              onSendTypingStatus={sendTypingStatus}
               showMemoryLane={showMemoryLane}
               onToggleMemoryLane={() => setShowMemoryLane((prev) => !prev)}
             />
