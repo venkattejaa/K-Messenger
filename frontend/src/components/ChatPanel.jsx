@@ -31,6 +31,13 @@ function AudioPlayerBubble({ src, isMe }) {
   const [currentTime, setCurrentTime] = useState(0);
   const audioRef = useRef(null);
 
+  useEffect(() => {
+    setIsPlaying(false);
+    setProgress(0);
+    setCurrentTime(0);
+    setDuration(0);
+  }, [src]);
+
   const togglePlay = () => {
     if (!audioRef.current) return;
     if (isPlaying) {
@@ -47,36 +54,20 @@ function AudioPlayerBubble({ src, isMe }) {
     const cur = audioRef.current.currentTime || 0;
     let dur = audioRef.current.duration;
     if (dur && isFinite(dur) && !isNaN(dur) && dur > 0) {
-      if (dur !== duration) setDuration(dur);
+      setDuration(dur);
     } else {
-      dur = Math.max(duration, cur || 1);
+      dur = Math.max(duration, cur);
+      setDuration(dur);
     }
     setCurrentTime(cur);
-    if (cur > duration) {
-      setDuration(cur);
-    }
     setProgress(dur > 0 ? (cur / dur) * 100 : 0);
   };
 
-  const updateDurationFromAudio = () => {
-    if (audioRef.current) {
-      let dur = audioRef.current.duration;
-      if (dur === Infinity || isNaN(dur) || !isFinite(dur)) {
-        // WebM blob duration calculation fix: seek to end to read true duration
-        audioRef.current.currentTime = 1e101;
-        audioRef.current.ontimeupdate = () => {
-          audioRef.current.ontimeupdate = handleTimeUpdate;
-          const realDur = audioRef.current.duration;
-          if (realDur && isFinite(realDur) && !isNaN(realDur) && realDur > 0) {
-            setDuration(realDur);
-          } else {
-            setDuration(audioRef.current.currentTime || 0);
-          }
-          audioRef.current.currentTime = 0;
-        };
-      } else if (dur && dur > 0) {
-        setDuration(dur);
-      }
+  const handleLoadedMetadata = () => {
+    if (!audioRef.current) return;
+    let dur = audioRef.current.duration;
+    if (dur && isFinite(dur) && !isNaN(dur) && dur > 0) {
+      setDuration(dur);
     }
   };
 
@@ -84,9 +75,6 @@ function AudioPlayerBubble({ src, isMe }) {
     setIsPlaying(false);
     setProgress(0);
     setCurrentTime(0);
-    if (audioRef.current && audioRef.current.currentTime > 0) {
-      setDuration((prev) => Math.max(prev, audioRef.current.currentTime));
-    }
   };
 
   const formatSeconds = (sec) => {
@@ -102,10 +90,10 @@ function AudioPlayerBubble({ src, isMe }) {
         ref={audioRef}
         src={src}
         onTimeUpdate={handleTimeUpdate}
-        onLoadedMetadata={updateDurationFromAudio}
-        onDurationChange={updateDurationFromAudio}
+        onLoadedMetadata={handleLoadedMetadata}
+        onCanPlayThrough={handleLoadedMetadata}
         onEnded={handleEnded}
-        preload="auto"
+        preload="metadata"
       />
       <button
         type="button"
@@ -120,7 +108,7 @@ function AudioPlayerBubble({ src, isMe }) {
       </button>
 
       <div className="flex-1 flex flex-col gap-1">
-        {/* Visualizer Waveform Bar */}
+        {/* Animated Visualizer Waveform Bar */}
         <div className="flex items-center gap-0.5 h-6">
           {[40, 70, 30, 90, 50, 80, 100, 40, 60, 85, 45, 75, 35, 95, 60, 40, 80, 50].map((h, i) => {
             const active = (i / 18) * 100 <= progress;
@@ -128,16 +116,23 @@ function AudioPlayerBubble({ src, isMe }) {
               <div
                 key={i}
                 style={{ height: `${h}%` }}
-                className={`w-1 rounded-full transition-colors ${
+                className={`w-1 rounded-full transition-all duration-150 ${
                   active
                     ? isMe ? 'bg-white' : 'bg-purple-400'
                     : isMe ? 'bg-white/30' : 'bg-slate-700'
-                }`}
+                } ${isPlaying && active ? 'animate-pulse scale-y-125' : ''}`}
               />
             );
           })}
         </div>
         <div className={`flex justify-between text-[10px] font-semibold ${isMe ? 'text-pink-100/90' : 'text-slate-400'}`}>
+          <span>{formatSeconds(currentTime)}</span>
+          <span>{formatSeconds(duration || currentTime)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
           <span>{formatSeconds(currentTime)}</span>
           <span>{duration > 0 ? formatSeconds(duration) : 'Voice note'}</span>
         </div>
@@ -178,7 +173,9 @@ export default function ChatPanel({
   const prevMessagesLengthRef = useRef(messages.length);
   const isInitialLoadRef = useRef(true);
   const [newMessage, setNewMessage] = useState('');
-  const [lightboxImage, setLightboxImage] = useState(null);
+  const [lightboxMedia, setLightboxMedia] = useState(null); // { url, type: 'image' | 'video' }
+  const [previewMediaFile, setPreviewMediaFile] = useState(null); // { file, previewUrl, type, fileName }
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [isNicknameModalOpen, setIsNicknameModalOpen] = useState(false);
 
   // Voice Note Recording State
@@ -320,20 +317,53 @@ export default function ChatPanel({
   const handleDownloadMedia = async (url) => {
     if (!url) return;
     try {
-      const response = await fetch(url);
+      let ext = 'jpg';
+      const lowerUrl = url.toLowerCase();
+      if (lowerUrl.endsWith('.png') || lowerUrl.includes('image/png')) ext = 'png';
+      else if (lowerUrl.endsWith('.gif') || lowerUrl.includes('image/gif')) ext = 'gif';
+      else if (lowerUrl.endsWith('.webp') || lowerUrl.includes('image/webp')) ext = 'webp';
+      else if (isVideoMedia(url)) ext = 'mp4';
+      else if (isAudioMedia(url)) ext = lowerUrl.endsWith('.mp3') ? 'mp3' : 'webm';
+
+      const fileName = `KMessenger_${Date.now()}.${ext}`;
+
+      // 1. Android Native Bridge
+      if (window.AndroidNative && window.AndroidNative.downloadFile) {
+        window.AndroidNative.downloadFile(url, fileName);
+        return;
+      }
+
+      // 2. Data URL (Base64) Download
+      if (url.startsWith('data:')) {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return;
+      }
+
+      // 3. Web Fetch & Blob Download Fallback
+      const response = await fetch(url, { mode: 'cors' });
       const blob = await response.blob();
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
-      const ext = url.split('.').pop()?.split('?')[0] || 'file';
-      a.download = `KMessenger_${Date.now()}.${ext}`;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
     } catch (err) {
-      console.warn('Direct fetch download failed, opening in new window:', err);
-      window.open(url, '_blank');
+      console.warn('Direct fetch download failed, opening direct link:', err);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `KMessenger_${Date.now()}`;
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
     }
   };
 
@@ -644,7 +674,30 @@ export default function ChatPanel({
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
-    if (file) onUpload(file);
+    if (file) {
+      const previewUrl = URL.createObjectURL(file);
+      setPreviewMediaFile({
+        file,
+        previewUrl,
+        type: file.type || (file.name.endsWith('.mp4') ? 'video/mp4' : 'image/jpeg'),
+        fileName: file.name,
+      });
+      e.target.value = '';
+    }
+  };
+
+  const handleConfirmSendMedia = async () => {
+    if (!previewMediaFile) return;
+    const { file } = previewMediaFile;
+    setPreviewMediaFile(null);
+    setIsUploadingMedia(true);
+    try {
+      await onUpload(file);
+    } catch (err) {
+      console.error('Failed to upload file:', err);
+    } finally {
+      setIsUploadingMedia(false);
+    }
   };
 
   const formatTime = (iso) => {
@@ -974,8 +1027,8 @@ export default function ChatPanel({
                     {audioUrl ? (
                       <AudioPlayerBubble src={audioUrl} isMe={isMe} />
                     ) : videoUrl ? (
-                      /* Inline Video Player */
-                      <div className="mb-2 overflow-hidden rounded-2xl border border-white/10 relative group/vid">
+                      /* Inline Video Player with Lightbox Expand */
+                      <div className="mb-2 overflow-hidden rounded-2xl border border-white/10 relative group/vid cursor-pointer">
                         <video
                           src={videoUrl}
                           controls
@@ -983,14 +1036,25 @@ export default function ChatPanel({
                           preload="metadata"
                           className="max-w-full max-h-72 rounded-2xl object-cover"
                         />
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLightboxMedia({ url: videoUrl, type: 'video' });
+                          }}
+                          className="absolute top-2 right-2 p-1.5 rounded-xl bg-black/60 backdrop-blur-md text-white hover:bg-black/80 transition-all cursor-pointer opacity-90 hover:opacity-100 shadow-md"
+                          title="Expand Video Full Screen"
+                        >
+                          <Maximize2 className="w-4 h-4 text-pink-300" />
+                        </button>
                       </div>
                     ) : imageUrl ? (
                       /* Photo Image */
                       <div
-                        className="mb-2 overflow-hidden rounded-2xl border border-white/10 group/img cursor-pointer"
+                        className="mb-2 overflow-hidden rounded-2xl border border-white/10 group/img cursor-pointer relative"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setLightboxImage(imageUrl);
+                          setLightboxMedia({ url: imageUrl, type: 'image' });
                         }}
                       >
                         <img
@@ -998,6 +1062,9 @@ export default function ChatPanel({
                           alt="Shared media"
                           className="max-w-full max-h-72 object-cover rounded-2xl transition-transform duration-300 group-hover/img:scale-105"
                         />
+                        <div className="absolute top-2 right-2 p-1.5 rounded-xl bg-black/60 backdrop-blur-md text-white opacity-0 group-hover/img:opacity-100 transition-opacity shadow-md">
+                          <Maximize2 className="w-4 h-4 text-pink-300" />
+                        </div>
                       </div>
                     ) : null}
 
@@ -1397,25 +1464,117 @@ export default function ChatPanel({
         </form>
       </div>
 
-      {/* Lightbox Preview Modal */}
-      {lightboxImage && createPortal(
+      {/* Unified Lightbox Preview Modal for Photos & Videos */}
+      {lightboxMedia && createPortal(
         <div
-          className="fixed inset-0 bg-slate-950/90 backdrop-blur-2xl flex items-center justify-center p-4"
+          className="fixed inset-0 bg-slate-950/95 backdrop-blur-2xl flex items-center justify-center p-4 animate-fadeIn"
           style={{ zIndex: 99999 }}
-          onClick={() => setLightboxImage(null)}
-          onTouchStart={(e) => { if (e.target === e.currentTarget) setLightboxImage(null); }}
+          onClick={() => setLightboxMedia(null)}
+          onTouchStart={(e) => { if (e.target === e.currentTarget) setLightboxMedia(null); }}
         >
-          <button
-            onClick={(e) => { e.stopPropagation(); setLightboxImage(null); }}
-            onTouchStart={(e) => { e.stopPropagation(); setLightboxImage(null); }}
-            className="fixed top-4 right-4 p-3 rounded-full bg-red-600/90 hover:bg-red-500 text-white shadow-2xl transition-all cursor-pointer border border-white/20"
-            style={{ zIndex: 100000 }}
-            title="Close"
+          <div className="fixed top-4 right-4 z-[100001] flex items-center gap-2">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDownloadMedia(lightboxMedia.url);
+              }}
+              className="p-2.5 sm:p-3 rounded-full bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-2xl hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold border border-white/20"
+              title="Download File"
+            >
+              <Download className="w-4 h-4 sm:w-5 sm:h-5" />
+              <span className="hidden sm:inline">Save</span>
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setLightboxMedia(null);
+              }}
+              onTouchStart={(e) => {
+                e.stopPropagation();
+                setLightboxMedia(null);
+              }}
+              className="p-3 rounded-full bg-red-600/90 hover:bg-red-500 text-white shadow-2xl transition-all cursor-pointer border border-white/20"
+              title="Close Preview"
+            >
+              <X className="w-6 h-6 stroke-[3]" />
+            </button>
+          </div>
+
+          <div
+            className="relative max-w-4xl max-h-[90vh] w-full flex items-center justify-center"
+            onClick={(e) => e.stopPropagation()}
           >
-            <X className="w-6 h-6 stroke-[3]" />
-          </button>
-          <div className="relative max-w-4xl max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
-            <img src={lightboxImage} alt="Enlarged shared media" className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl" draggable={false} />
+            {lightboxMedia.type === 'video' ? (
+              <video
+                src={lightboxMedia.url}
+                controls
+                autoPlay
+                playsInline
+                className="max-w-full max-h-[85vh] rounded-2xl shadow-2xl"
+              />
+            ) : (
+              <img
+                src={lightboxMedia.url}
+                alt="Enlarged shared media"
+                className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl"
+                draggable={false}
+              />
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Pre-Send Media Preview Modal */}
+      {previewMediaFile && createPortal(
+        <div
+          className="fixed inset-0 bg-slate-950/95 backdrop-blur-2xl flex items-center justify-center p-4 z-[99999] animate-fadeIn"
+          onClick={() => setPreviewMediaFile(null)}
+        >
+          <div
+            className="relative max-w-lg w-full bg-[#121212] border border-[#27272a] rounded-3xl overflow-hidden shadow-2xl flex flex-col p-4 sm:p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-[#27272a] mb-4">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-pink-400" />
+                <span>Preview {previewMediaFile.type.startsWith('video') ? 'Video' : 'Photo'}</span>
+              </h3>
+              <button
+                onClick={() => setPreviewMediaFile(null)}
+                className="p-1.5 rounded-xl bg-[#18181b] border border-slate-800 text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Media Preview Container */}
+            <div className="max-h-72 overflow-hidden rounded-2xl bg-black flex items-center justify-center mb-4 border border-[#27272a]">
+              {previewMediaFile.type.startsWith('video') ? (
+                <video src={previewMediaFile.previewUrl} controls playsInline className="max-h-72 max-w-full rounded-2xl" />
+              ) : (
+                <img src={previewMediaFile.previewUrl} alt="Preview" className="max-h-72 max-w-full object-contain rounded-2xl" />
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setPreviewMediaFile(null)}
+                className="flex-1 py-2.5 rounded-xl bg-[#18181b] border border-slate-800 text-slate-300 font-semibold text-xs hover:bg-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSendMedia}
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 text-white font-bold text-xs shadow-lg hover:from-pink-500 hover:to-purple-500 transition-all flex items-center justify-center gap-1.5 active:scale-95"
+              >
+                <Send className="w-4 h-4" />
+                <span>Send {previewMediaFile.type.startsWith('video') ? 'Video' : 'Photo'}</span>
+              </button>
+            </div>
           </div>
         </div>,
         document.body

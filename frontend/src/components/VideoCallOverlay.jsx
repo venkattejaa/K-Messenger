@@ -94,20 +94,20 @@ export default function VideoCallOverlay({
     };
   }, [isDragging, isLocalMinimized]);
 
-  // Explicit stream binding on stream or callState change
+  // Explicit stream binding on stream, callState, or minimize state change
   useEffect(() => {
-    if (localVideoRef?.current && localStream) {
+    if (!isCallMinimized && localVideoRef?.current && localStream) {
       localVideoRef.current.srcObject = localStream;
       localVideoRef.current.play().catch((e) => console.warn('Local video play error:', e));
     }
-  }, [localStream, callState, localVideoRef, videoEnabled]);
+  }, [localStream, callState, localVideoRef, videoEnabled, isCallMinimized]);
 
   useEffect(() => {
-    if (remoteVideoRef?.current && remoteStream) {
+    if (!isCallMinimized && remoteVideoRef?.current && remoteStream) {
       remoteVideoRef.current.srcObject = remoteStream;
       remoteVideoRef.current.play().catch((e) => console.warn('Remote video play error:', e));
     }
-  }, [remoteStream, callState, remoteVideoRef]);
+  }, [remoteStream, callState, remoteVideoRef, isCallMinimized]);
 
   // Call duration timer
   useEffect(() => {
