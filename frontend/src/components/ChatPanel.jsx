@@ -692,8 +692,16 @@ export default function ChatPanel({
           const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
 
           if (audioBlob.size > 0) {
-            const audioFile = new File([audioBlob], `voicenote_${Date.now()}.${ext}`, { type: actualMime });
-            await onUpload(audioFile);
+            let uploadPayload = audioBlob;
+            try {
+              audioBlob.name = `voicenote_${Date.now()}.${ext}`;
+            } catch (e) {}
+            try {
+              uploadPayload = new File([audioBlob], `voicenote_${Date.now()}.${ext}`, { type: actualMime });
+            } catch (e) {
+              console.warn('File constructor unsupported, using Blob fallback:', e);
+            }
+            await onUpload(uploadPayload);
           } else {
             console.warn('Recorded voice note blob is empty (0 bytes).');
             alert('Voice recording was empty. Please record for at least 1 second.');
@@ -709,7 +717,7 @@ export default function ChatPanel({
         }
       };
 
-      mediaRecorder.start();
+      mediaRecorder.start(250);
       setIsRecording(true);
       setRecordingTime(0);
 

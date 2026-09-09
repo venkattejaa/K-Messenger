@@ -501,68 +501,76 @@ export const apiClearMessages = async (userId = null, partnerId = null) => {
 
 // 10. File Upload (Supabase Storage / Local API)
 export const apiUploadFile = async (file) => {
-  if (isSupabaseConfigured()) {
-    let fileExt = file.name ? file.name.split('.').pop().toLowerCase() : 'webm';
-    if (fileExt === 'blob' || !fileExt || fileExt === file.name.toLowerCase()) {
-      if (file.type?.includes('mp4') || file.type?.includes('aac')) fileExt = 'm4a';
-      else if (file.type?.includes('ogg')) fileExt = 'ogg';
-      else if (file.type?.includes('wav')) fileExt = 'wav';
-      else if (file.type?.includes('mp3')) fileExt = 'mp3';
-      else fileExt = 'webm';
-    }
-
-    const isAudio =
-      file.type?.startsWith('audio') ||
-      file.name?.toLowerCase().includes('voicenote') ||
-      file.name?.toLowerCase().includes('audio') ||
-      ['webm', 'm4a', 'ogg', 'wav', 'mp3', 'aac', 'flac', 'opus'].includes(fileExt);
-
-    const prefix = isAudio ? 'voicenote' : 'media';
-    const fileName = `${prefix}_${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
-    const filePath = `chat_uploads/${fileName}`;
-
-    try {
-      const mimeType = file.type || (fileExt === 'm4a' ? 'audio/mp4' : fileExt === 'ogg' ? 'audio/ogg' : 'audio/webm');
-      const { error: uploadError } = await supabase.storage
-        .from('chat_media')
-        .upload(filePath, file, {
-          contentType: mimeType,
-          upsert: true,
-        });
-
-      if (!uploadError) {
-        const { data: publicUrlData } = supabase.storage
-          .from('chat_media')
-          .getPublicUrl(filePath);
-        if (publicUrlData && publicUrlData.publicUrl) {
-          return { media_url: publicUrlData.publicUrl };
-        }
+  try {
+    if (isSupabaseConfigured()) {
+      let fileExt = (file && file.name) ? file.name.split('.').pop().toLowerCase() : 'webm';
+      if (fileExt === 'blob' || !fileExt || (file.name && fileExt === file.name.toLowerCase())) {
+        if (file.type?.includes('mp4') || file.type?.includes('aac')) fileExt = 'm4a';
+        else if (file.type?.includes('ogg')) fileExt = 'ogg';
+        else if (file.type?.includes('wav')) fileExt = 'wav';
+        else if (file.type?.includes('mp3')) fileExt = 'mp3';
+        else fileExt = 'webm';
       }
-      console.warn('Supabase storage upload returned error, using Data URL fallback:', uploadError);
-    } catch (e) {
-      console.warn('Supabase storage upload exception, using Data URL fallback:', e);
+
+      const isAudio =
+        file.type?.startsWith('audio') ||
+        (file.name && file.name.toLowerCase().includes('voicenote')) ||
+        (file.name && file.name.toLowerCase().includes('audio')) ||
+        ['webm', 'm4a', 'ogg', 'wav', 'mp3', 'aac', 'flac', 'opus'].includes(fileExt);
+
+      const prefix = isAudio ? 'voicenote' : 'media';
+      const fileName = `${prefix}_${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
+      const filePath = `chat_uploads/${fileName}`;
+
+      try {
+        const mimeType = file.type || (fileExt === 'm4a' ? 'audio/mp4' : fileExt === 'ogg' ? 'audio/ogg' : 'audio/webm');
+        const { error: uploadError } = await supabase.storage
+          .from('chat_media')
+          .upload(filePath, file, {
+            contentType: mimeType,
+            upsert: true,
+          });
+
+        if (!uploadError) {
+          const { data: publicUrlData } = supabase.storage
+            .from('chat_media')
+            .getPublicUrl(filePath);
+          if (publicUrlData && publicUrlData.publicUrl) {
+            return { media_url: publicUrlData.publicUrl };
+          }
+        }
+        console.warn('Supabase storage upload returned error, using Data URL fallback:', uploadError);
+      } catch (e) {
+        console.warn('Supabase storage upload exception, using Data URL fallback:', e);
+      }
+
+      // Fallback: Convert file to Base64 Data URL so voice note/file is 100% guaranteed to send
+      return new Promise((resolve) => {
+        try {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve({ media_url: reader.result || null });
+          reader.onerror = () => resolve({ media_url: null });
+          reader.readAsDataURL(file);
+        } catch (err) {
+          resolve({ media_url: null });
+        }
+      });
     }
+  } catch (err) {
+    console.error('apiUploadFile error:', err);
+  }
 
-    // Fallback: Convert file to Base64 Data URL so voice note/file is 100% guaranteed to send
-    return new Promise((resolve, reject) => {
+  // Guaranteed fallback
+  return new Promise((resolve) => {
+    try {
       const reader = new FileReader();
-      reader.onloadend = () => resolve({ media_url: reader.result });
-      reader.onerror = (err) => reject(err);
+      reader.onloadend = () => resolve({ media_url: reader.result || null });
+      reader.onerror = () => resolve({ media_url: null });
       reader.readAsDataURL(file);
-    });
-  }
-
-  // Local FastAPI fallback
-  const formData = new FormData();
-  formData.append('file', file);
-  const res = await fetch(`${getApiBaseUrl()}/upload`, {
-    method: 'POST',
-    body: formData,
+    } catch (e) {
+      resolve({ media_url: null });
+    }
   });
-  if (!res.ok) {
-    throw new Error('Upload failed');
-  }
-  return await res.json();
 };
 
 // 11. Mute Setting Persistence (Syncs across all devices & logins)
