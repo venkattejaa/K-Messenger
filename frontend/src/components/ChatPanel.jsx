@@ -392,12 +392,30 @@ function VideoPlayerBubble({ src, onExpand }) {
 function LightboxVideoPlayer({ src, onClose, onDownload }) {
   const containerRef = useRef(null);
   const videoRef = useRef(null);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.play().catch((err) => console.log('Autoplay handled:', err));
-    }
+    const v = videoRef.current;
+    if (!v) return;
+
+    const attemptPlay = async () => {
+      try {
+        await v.play();
+        setIsPlaying(true);
+      } catch (err) {
+        console.log('Unmuted autoplay blocked, trying muted:', err);
+        try {
+          v.muted = true;
+          await v.play();
+          setIsPlaying(true);
+        } catch (e) {
+          setIsPlaying(false);
+        }
+      }
+    };
+    attemptPlay();
+
     const handleFSChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
     };
@@ -409,8 +427,32 @@ function LightboxVideoPlayer({ src, onClose, onDownload }) {
     };
   }, [src]);
 
+  const togglePlay = (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      v.muted = false;
+      v.play()
+        .then(() => setIsPlaying(true))
+        .catch(() => {
+          v.muted = true;
+          v.play().then(() => setIsPlaying(true)).catch(console.error);
+        });
+    } else {
+      v.pause();
+      setIsPlaying(false);
+    }
+  };
+
   const toggleNativeFullscreen = (e) => {
-    if (e) e.stopPropagation();
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     const container = containerRef.current;
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(() => {});
@@ -430,7 +472,10 @@ function LightboxVideoPlayer({ src, onClose, onDownload }) {
   };
 
   const handleClose = (e) => {
-    if (e) e.stopPropagation();
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(() => {});
     }
@@ -440,13 +485,15 @@ function LightboxVideoPlayer({ src, onClose, onDownload }) {
   return (
     <div
       ref={containerRef}
-      className="flex flex-col items-center justify-center gap-3 w-full max-w-4xl max-h-[85vh] relative bg-black/90 p-4 rounded-3xl border border-white/10 shadow-2xl group/lightbox"
+      className="flex flex-col items-center justify-center gap-3 w-full max-w-4xl max-h-[85vh] relative bg-black/95 p-4 rounded-3xl border border-white/10 shadow-2xl group/lightbox"
+      onClick={(e) => e.stopPropagation()}
     >
-      <div className="absolute top-4 right-4 z-[100002] flex items-center gap-2">
+      <div className="absolute top-4 right-4 z-[100005] flex items-center gap-2">
         {onDownload && (
           <button
             type="button"
             onClick={(e) => {
+              e.preventDefault();
               e.stopPropagation();
               onDownload(src);
             }}
@@ -460,7 +507,6 @@ function LightboxVideoPlayer({ src, onClose, onDownload }) {
         <button
           type="button"
           onClick={handleClose}
-          onTouchStart={handleClose}
           className="p-3 rounded-full bg-red-600 hover:bg-red-500 text-white shadow-2xl transition-all cursor-pointer border border-white/20 active:scale-90"
           title="Close Preview"
         >
@@ -468,19 +514,32 @@ function LightboxVideoPlayer({ src, onClose, onDownload }) {
         </button>
       </div>
 
-      <video
-        ref={videoRef}
-        src={src}
-        controls
-        playsInline
-        autoPlay
-        preload="auto"
-        className="w-full max-h-[70vh] rounded-2xl shadow-2xl object-contain bg-black"
-      />
+      <div className="relative w-full flex items-center justify-center cursor-pointer group/vid" onClick={togglePlay}>
+        <video
+          ref={videoRef}
+          src={src}
+          controls
+          playsInline
+          autoPlay
+          preload="auto"
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
+          className="w-full max-h-[70vh] rounded-2xl shadow-2xl object-contain bg-black"
+          onClick={(e) => e.stopPropagation()}
+        />
+        {!isPlaying && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-2xl transition-all pointer-events-none">
+            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-tr from-pink-600 to-purple-600 text-white flex items-center justify-center shadow-2xl hover:scale-110 active:scale-95 transition-all border-2 border-white/30 pointer-events-auto">
+              <Play className="w-8 h-8 sm:w-10 sm:h-10 fill-current ml-1" />
+            </div>
+          </div>
+        )}
+      </div>
+
       <button
         type="button"
         onClick={toggleNativeFullscreen}
-        className="px-4 py-2 rounded-full bg-gradient-to-r from-pink-600 to-purple-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-xl transition-all active:scale-95 cursor-pointer border border-white/20 hover:opacity-90"
+        className="px-4 py-2 rounded-full bg-gradient-to-r from-pink-600 to-purple-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-xl transition-all active:scale-95 cursor-pointer border border-white/20 hover:opacity-90 z-[100005]"
       >
         <Maximize2 className="w-4 h-4" />
         <span>{isFullscreen ? 'Exit Fullscreen' : 'Full Screen View'}</span>
