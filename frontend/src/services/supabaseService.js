@@ -315,8 +315,8 @@ export const apiGetMessages = async (userId = null, partnerId = null) => {
     let query = supabase
       .from('messages')
       .select('*')
-      .order('timestamp', { ascending: true })
-      .limit(500);
+      .order('timestamp', { ascending: false })
+      .limit(1000);
 
     if (effectiveUserId && effectivePartnerId) {
       query = query.in('sender_id', [effectiveUserId, effectivePartnerId]);
@@ -332,6 +332,9 @@ export const apiGetMessages = async (userId = null, partnerId = null) => {
     
     // Safely filter internal system settings in JS so NULL text_content media messages are not dropped by SQL
     const validData = data.filter((m) => !m.text_content || !m.text_content.startsWith('USER_SETTING:'));
+
+    // Reverse to chronological order (oldest top, newest bottom)
+    validData.reverse();
 
     return validData.map((m) => ({
       id: m.id,
