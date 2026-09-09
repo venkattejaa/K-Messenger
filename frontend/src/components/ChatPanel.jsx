@@ -370,6 +370,7 @@ function VideoPlayerBubble({ src, onExpand }) {
         src={src}
         controls
         playsInline
+        crossOrigin="anonymous"
         preload="metadata"
         className="max-w-full max-h-72 w-full rounded-2xl object-contain bg-black"
         onClick={(e) => e.stopPropagation()}
@@ -521,6 +522,7 @@ function LightboxVideoPlayer({ src, onClose, onDownload }) {
           controls
           playsInline
           autoPlay
+          crossOrigin="anonymous"
           preload="auto"
           onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}

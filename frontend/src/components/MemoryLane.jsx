@@ -188,6 +188,7 @@ function LightboxVideoPlayer({ src, onClose, onDownload }) {
           controls
           playsInline
           autoPlay
+          crossOrigin="anonymous"
           preload="auto"
           onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}
