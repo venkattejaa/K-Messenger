@@ -214,6 +214,7 @@ export default function ChatPanel({
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const recordingTimerRef = useRef(null);
+  const isCancellingRef = useRef(false);
 
   // Inline Message Editing, Reply & Actions State
   const [editingMsgId, setEditingMsgId] = useState(null);
@@ -632,12 +633,64 @@ export default function ChatPanel({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunksRef.current = [];
-      const mediaRecorder = new MediaRecorder(stream);
+      isCancellingRef.current = false;
+
+      let mimeType = 'audio/webm';
+      if (typeof MediaRecorder !== 'undefined') {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          mimeType = 'audio/webm;codecs=opus';
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+          mimeType = 'audio/mp4';
+        } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
+          mimeType = 'audio/ogg';
+        }
+      }
+
+      const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
+        if (e.data && e.data.size > 0) {
           audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        try {
+          if (stream) {
+            stream.getTracks().forEach((track) => track.stop());
+          }
+        } catch (e) {
+          console.warn('Error stopping audio stream tracks:', e);
+        }
+
+        if (isCancellingRef.current) {
+          isCancellingRef.current = false;
+          audioChunksRef.current = [];
+          setIsRecording(false);
+          setRecordingTime(0);
+          return;
+        }
+
+        try {
+          setIsUploadingMedia(true);
+          const actualMime = mediaRecorder.mimeType || mimeType || 'audio/webm';
+          const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
+
+          if (audioBlob.size > 0) {
+            const ext = actualMime.includes('mp4') ? 'm4a' : actualMime.includes('ogg') ? 'ogg' : 'webm';
+            const audioFile = new File([audioBlob], `voicenote_${Date.now()}.${ext}`, { type: actualMime });
+            await onUpload(audioFile);
+          } else {
+            console.warn('Recorded voice note blob is empty (0 bytes).');
+          }
+        } catch (err) {
+          console.error('Error uploading recorded voice note:', err);
+        } finally {
+          audioChunksRef.current = [];
+          setIsRecording(false);
+          setRecordingTime(0);
+          setIsUploadingMedia(false);
         }
       };
 
@@ -657,31 +710,11 @@ export default function ChatPanel({
   const stopAndSendRecording = () => {
     if (!mediaRecorderRef.current) return;
     clearInterval(recordingTimerRef.current);
+    isCancellingRef.current = false;
     const mediaRecorder = mediaRecorderRef.current;
-
-    mediaRecorder.onstop = async () => {
-      try {
-        mediaRecorder.stream.getTracks().forEach((track) => track.stop());
-        const mimeType = mediaRecorder.mimeType || 'audio/webm';
-        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-
-        if (audioBlob.size > 0) {
-          const ext = mimeType.includes('mp4') ? 'm4a' : mimeType.includes('ogg') ? 'ogg' : 'webm';
-          const audioFile = new File([audioBlob], `voicenote_${Date.now()}.${ext}`, { type: mimeType });
-          await onUpload(audioFile);
-        }
-      } catch (err) {
-        console.error('Error sending voice note:', err);
-      } finally {
-        audioChunksRef.current = [];
-        setIsRecording(false);
-        setRecordingTime(0);
-      }
-    };
 
     try {
       if (mediaRecorder.state !== 'inactive') {
-        try { mediaRecorder.requestData(); } catch(e) {}
         mediaRecorder.stop();
       }
     } catch (err) {
@@ -694,16 +727,21 @@ export default function ChatPanel({
   const cancelRecording = () => {
     if (!mediaRecorderRef.current) return;
     clearInterval(recordingTimerRef.current);
+    isCancellingRef.current = true;
     const mediaRecorder = mediaRecorderRef.current;
 
-    mediaRecorder.onstop = () => {
-      mediaRecorder.stream.getTracks().forEach((track) => track.stop());
-      audioChunksRef.current = [];
+    try {
+      if (mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      } else {
+        setIsRecording(false);
+        setRecordingTime(0);
+      }
+    } catch (err) {
+      console.error('Error cancelling recorder:', err);
       setIsRecording(false);
       setRecordingTime(0);
-    };
-
-    mediaRecorder.stop();
+    }
   };
 
   const formatRecordingTime = (sec) => {
