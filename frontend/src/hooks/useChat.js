@@ -75,9 +75,6 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
           
           const sId = Number(newRow.sender_id);
           const myId = Number(userId);
-          const pId = partnerId ? Number(partnerId) : (myId === 1 ? 2 : myId === 2 ? 1 : myId === 3 ? 4 : myId === 4 ? 3 : null);
-
-          if (pId && sId !== myId && sId !== pId) return;
 
           const formatted = {
             id: newRow.id,
@@ -132,11 +129,11 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
         }
       })
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
-        if (payload && payload.sender_id && Number(payload.sender_id) === Number(effectivePartnerId)) {
+        if (payload && payload.sender_id && Number(payload.sender_id) !== Number(userId)) {
           setIsPartnerTyping(Boolean(payload.is_typing));
           if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
           if (payload.is_typing) {
-            typingTimeoutRef.current = setTimeout(() => setIsPartnerTyping(false), 3000);
+            typingTimeoutRef.current = setTimeout(() => setIsPartnerTyping(false), 3500);
           }
         }
       })

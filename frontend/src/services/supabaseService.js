@@ -321,7 +321,7 @@ export const apiGetMessages = async (userId = null, partnerId = null) => {
     if (effectiveUserId && effectivePartnerId) {
       query = query.in('sender_id', [effectiveUserId, effectivePartnerId]);
     } else if (effectiveUserId) {
-      query = query.or(`sender_id.eq.${effectiveUserId}`);
+      query = query.or(`sender_id.eq.${effectiveUserId},sender_id.neq.${effectiveUserId}`);
     }
 
     const { data, error } = await query;
@@ -501,23 +501,38 @@ export const apiClearMessages = async (userId = null, partnerId = null) => {
 // 10. File Upload (Supabase Storage / Local API)
 export const apiUploadFile = async (file) => {
   if (isSupabaseConfigured()) {
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
+    const fileExt = file.name ? file.name.split('.').pop() : 'webm';
+    const fileName = `media_${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
     const filePath = `chat_uploads/${fileName}`;
 
-    const { error: uploadError } = await supabase.storage
-      .from('chat_media')
-      .upload(filePath, file);
+    try {
+      const { error: uploadError } = await supabase.storage
+        .from('chat_media')
+        .upload(filePath, file, {
+          contentType: file.type || (fileExt === 'webm' ? 'audio/webm' : 'application/octet-stream'),
+          upsert: true,
+        });
 
-    if (uploadError) {
-      throw new Error(`Upload failed: ${uploadError.message}`);
+      if (!uploadError) {
+        const { data: publicUrlData } = supabase.storage
+          .from('chat_media')
+          .getPublicUrl(filePath);
+        if (publicUrlData && publicUrlData.publicUrl) {
+          return { media_url: publicUrlData.publicUrl };
+        }
+      }
+      console.warn('Supabase storage upload returned error, using Data URL fallback:', uploadError);
+    } catch (e) {
+      console.warn('Supabase storage upload exception, using Data URL fallback:', e);
     }
 
-    const { data: publicUrlData } = supabase.storage
-      .from('chat_media')
-      .getPublicUrl(filePath);
-
-    return { media_url: publicUrlData.publicUrl };
+    // Fallback: Convert file to Base64 Data URL so voice note/file is 100% guaranteed to send
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve({ media_url: reader.result });
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
   }
 
   // Local FastAPI fallback

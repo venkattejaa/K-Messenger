@@ -223,6 +223,7 @@ export default function ChatPanel({
   const [replyingToMsg, setReplyingToMsg] = useState(null);
   const [highlightedMsgId, setHighlightedMsgId] = useState(null);
   const inputRef = useRef(null);
+  const typingTimerRef = useRef(null);
 
   const defaultPartnerName =
     currentUserId === 1 || username?.toLowerCase() === 'venkattejaa'
@@ -657,18 +658,35 @@ export default function ChatPanel({
     const mediaRecorder = mediaRecorderRef.current;
 
     mediaRecorder.onstop = async () => {
-      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-      mediaRecorder.stream.getTracks().forEach((track) => track.stop());
+      try {
+        mediaRecorder.stream.getTracks().forEach((track) => track.stop());
+        const mimeType = mediaRecorder.mimeType || 'audio/webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
 
-      if (audioBlob.size > 0) {
-        const audioFile = new File([audioBlob], `voicenote_${Date.now()}.webm`, { type: 'audio/webm' });
-        onUpload(audioFile);
+        if (audioBlob.size > 0) {
+          const ext = mimeType.includes('mp4') ? 'm4a' : mimeType.includes('ogg') ? 'ogg' : 'webm';
+          const audioFile = new File([audioBlob], `voicenote_${Date.now()}.${ext}`, { type: mimeType });
+          await onUpload(audioFile);
+        }
+      } catch (err) {
+        console.error('Error sending voice note:', err);
+      } finally {
+        audioChunksRef.current = [];
+        setIsRecording(false);
+        setRecordingTime(0);
       }
-      setIsRecording(false);
-      setRecordingTime(0);
     };
 
-    mediaRecorder.stop();
+    try {
+      if (mediaRecorder.state !== 'inactive') {
+        try { mediaRecorder.requestData(); } catch(e) {}
+        mediaRecorder.stop();
+      }
+    } catch (err) {
+      console.error('Error stopping recorder:', err);
+      setIsRecording(false);
+      setRecordingTime(0);
+    }
   };
 
   const cancelRecording = () => {
@@ -714,6 +732,9 @@ export default function ChatPanel({
   const handleSend = (e) => {
     if (e) e.preventDefault();
     if ((!newMessage.trim() && !uploading) || isRecording) return;
+
+    if (onSendTypingStatus) onSendTypingStatus(false);
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
 
     let initialReactions = {};
     if (replyingToMsg) {
@@ -1516,7 +1537,13 @@ export default function ChatPanel({
                 value={newMessage}
                 onChange={(e) => {
                   setNewMessage(e.target.value);
-                  if (onSendTypingStatus) onSendTypingStatus(true);
+                  if (onSendTypingStatus) {
+                    onSendTypingStatus(true);
+                    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+                    typingTimerRef.current = setTimeout(() => {
+                      onSendTypingStatus(false);
+                    }, 2500);
+                  }
                   e.target.style.height = 'auto';
                   e.target.style.height = `${Math.min(e.target.scrollHeight, 110)}px`;
                 }}
