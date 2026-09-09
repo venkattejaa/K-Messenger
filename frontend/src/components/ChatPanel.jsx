@@ -1,7 +1,7 @@
 import {
   MessageSquare, Image, Video, Phone, Send, Loader2, ShieldCheck, User,
   CheckCheck, Paperclip, Settings, Layers, Heart, Smile, Sparkles, Info,
-  Edit3, Volume2, VolumeX, Mic, Square, Play, Pause, Trash2, Check, X, MoreVertical, Copy, Reply, Download
+  Edit3, Volume2, VolumeX, Mic, Square, Play, Pause, Trash2, Check, X, MoreVertical, Copy, Reply, Download, Maximize2
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
