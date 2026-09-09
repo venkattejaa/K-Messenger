@@ -10,13 +10,16 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
+import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.app.DownloadManager
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.NotificationCompat
@@ -136,6 +139,23 @@ class WebAppInterface(private val context: Context) {
             e.printStackTrace()
         }
     }
+
+    @JavascriptInterface
+    fun downloadFile(url: String, fileName: String) {
+        try {
+            val request = DownloadManager.Request(Uri.parse(url)).apply {
+                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "$fileName.jpg")
+                setTitle("K-Messenger Download")
+                setDescription("Downloading memory...")
+                setMimeType("image/*")
+            }
+            val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            dm.enqueue(request)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 }
 
 class MainActivity : ComponentActivity() {
@@ -231,6 +251,23 @@ class MainActivity : ComponentActivity() {
                     return false
                 }
                 return true
+            }
+        }
+
+        webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+            try {
+                val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
+                val request = DownloadManager.Request(Uri.parse(url)).apply {
+                    setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                    setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+                    setTitle(fileName)
+                    setDescription("Downloading...")
+                    if (mimeType != null) setMimeType(mimeType)
+                }
+                val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                dm.enqueue(request)
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
     }

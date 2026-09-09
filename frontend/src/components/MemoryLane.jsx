@@ -1,5 +1,6 @@
 import { Image as ImageIcon, Loader2, X, Maximize2, Download, Calendar, Search, Layers, ArrowLeft, Film, Mic, Play, Pause } from 'lucide-react';
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { apiGetMessages } from '../services/supabaseService';
 
 function isAudioMedia(url) {
@@ -37,6 +38,39 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('visual'); // 'visual' (photos & videos) or 'audio' (voice notes)
   const [expandedItem, setExpandedItem] = useState(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  // Download handler that works inside Android WebView
+  const handleDownload = useCallback(async (url) => {
+    if (isDownloading) return;
+    setIsDownloading(true);
+    try {
+      // Try Android native download bridge first
+      if (window.AndroidNative && window.AndroidNative.downloadFile) {
+        window.AndroidNative.downloadFile(url, 'K_memory_' + Date.now());
+        setIsDownloading(false);
+        return;
+      }
+      // Fallback: fetch blob and trigger browser download
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const ext = url.split('.').pop()?.split('?')[0] || 'jpg';
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `K_memory_${Date.now()}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    } catch (err) {
+      console.error('Download failed:', err);
+      // Last resort: open in new tab
+      window.open(url, '_blank');
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [isDownloading]);
 
   const fetchGallery = useCallback(async () => {
     try {
@@ -262,15 +296,18 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
         )}
       </div>
 
-      {/* Lightbox Expanded Modal */}
-      {expandedItem && (
+      {/* Lightbox Expanded Modal - rendered via portal at document root to avoid z-index/overflow clipping */}
+      {expandedItem && createPortal(
         <div
-          className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-2xl flex items-center justify-center p-4 md:p-8 animate-fadeIn"
+          className="fixed inset-0 bg-slate-950/95 backdrop-blur-2xl flex items-center justify-center p-4 md:p-8 animate-fadeIn"
+          style={{ zIndex: 99999 }}
           onClick={() => setExpandedItem(null)}
+          onTouchEnd={(e) => { if (e.target === e.currentTarget) setExpandedItem(null); }}
         >
           <div
-            className="relative max-w-4xl max-h-[90vh] bg-[#121212] border border-[#27272a] rounded-3xl overflow-hidden shadow-2xl flex flex-col"
+            className="relative max-w-4xl max-h-[90vh] w-full bg-[#121212] border border-[#27272a] rounded-3xl overflow-hidden shadow-2xl flex flex-col"
             onClick={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
             <div className="p-4 border-b border-[#27272a] flex items-center justify-between bg-[#0B0F17]">
@@ -279,18 +316,20 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
                 <span>{new Date(expandedItem.timestamp).toLocaleString()}</span>
               </div>
               <div className="flex items-center gap-2">
-                <a
-                  href={expandedItem.media_url}
-                  download
-                  target="_blank"
-                  rel="noreferrer"
-                  className="p-2 rounded-xl bg-[#18181b] border border-slate-800 text-slate-200 hover:text-white hover:bg-slate-800 transition-colors text-xs flex items-center gap-1.5 font-medium"
-                >
-                  <Download className="w-4 h-4 text-pink-400" />
-                  Save
-                </a>
                 <button
-                  onClick={() => setExpandedItem(null)}
+                  onClick={(e) => { e.stopPropagation(); handleDownload(expandedItem.media_url); }}
+                  disabled={isDownloading}
+                  className="p-2 rounded-xl bg-[#18181b] border border-slate-800 text-slate-200 hover:text-white hover:bg-slate-800 transition-colors text-xs flex items-center gap-1.5 font-medium cursor-pointer disabled:opacity-50"
+                >
+                  {isDownloading ? (
+                    <Loader2 className="w-4 h-4 text-pink-400 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4 text-pink-400" />
+                  )}
+                  {isDownloading ? 'Saving...' : 'Save'}
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setExpandedItem(null); }}
                   className="p-2 rounded-xl bg-[#18181b] border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
                 >
                   <X className="w-4 h-4" />
@@ -305,6 +344,7 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
                   src={expandedItem.media_url}
                   controls
                   autoPlay
+                  playsInline
                   className="max-w-full max-h-[75vh] rounded-2xl shadow-2xl"
                 />
               ) : (
@@ -312,11 +352,13 @@ export default function MemoryLane({ currentUserId, partnerId, onBackToChat, onC
                   src={expandedItem.media_url}
                   alt="Expanded memory"
                   className="max-w-full max-h-[75vh] object-contain rounded-2xl shadow-2xl"
+                  draggable={false}
                 />
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
