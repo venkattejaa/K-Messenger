@@ -274,9 +274,12 @@ export default function ChatPanel({
       l.endsWith('.ogg') ||
       l.endsWith('.aac') ||
       l.endsWith('.flac') ||
+      l.endsWith('.opus') ||
       l.includes('voicenote') ||
+      l.includes('voice_') ||
       l.includes('audio_') ||
       l.includes('audio/') ||
+      l.includes('audio') ||
       l.includes('data:audio')
     );
   };
@@ -373,16 +376,17 @@ export default function ChatPanel({
 
   const getImageUrl = (msg) => {
     if (!msg) return null;
-    if (msg.media_url && !isAudioMedia(msg.media_url) && !isVideoMedia(msg.media_url) && !isDocumentMedia(msg.media_url)) {
-      return msg.media_url;
+    const url = msg.media_url;
+    if (url) {
+      if (isAudioMedia(url) || isVideoMedia(url) || isDocumentMedia(url)) return null;
+      if (url.includes('voicenote') || url.includes('audio_') || url.includes('data:audio')) return null;
+      return url;
     }
     if (msg.text_content) {
       const trimmed = msg.text_content.trim();
       if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
         if (!isAudioMedia(trimmed) && !isVideoMedia(trimmed) && !isDocumentMedia(trimmed)) {
-          if (isImageMedia(trimmed) || trimmed.includes('/chat_media/') || trimmed.includes('/chat_uploads/')) {
-            return trimmed;
-          }
+          if (isImageMedia(trimmed)) return trimmed;
         }
       }
     }
@@ -635,18 +639,22 @@ export default function ChatPanel({
       audioChunksRef.current = [];
       isCancellingRef.current = false;
 
-      let mimeType = 'audio/webm';
-      if (typeof MediaRecorder !== 'undefined') {
+      let mimeType = null;
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported) {
         if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
           mimeType = 'audio/webm;codecs=opus';
+        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+          mimeType = 'audio/webm';
         } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
           mimeType = 'audio/mp4';
+        } else if (MediaRecorder.isTypeSupported('audio/aac')) {
+          mimeType = 'audio/aac';
         } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
           mimeType = 'audio/ogg';
         }
       }
 
-      const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (e) => {
@@ -675,17 +683,24 @@ export default function ChatPanel({
         try {
           setIsUploadingMedia(true);
           const actualMime = mediaRecorder.mimeType || mimeType || 'audio/webm';
+          let ext = 'webm';
+          if (actualMime.includes('mp4') || actualMime.includes('aac')) ext = 'm4a';
+          else if (actualMime.includes('ogg')) ext = 'ogg';
+          else if (actualMime.includes('wav')) ext = 'wav';
+          else if (actualMime.includes('mp3')) ext = 'mp3';
+
           const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
 
           if (audioBlob.size > 0) {
-            const ext = actualMime.includes('mp4') ? 'm4a' : actualMime.includes('ogg') ? 'ogg' : 'webm';
             const audioFile = new File([audioBlob], `voicenote_${Date.now()}.${ext}`, { type: actualMime });
             await onUpload(audioFile);
           } else {
             console.warn('Recorded voice note blob is empty (0 bytes).');
+            alert('Voice recording was empty. Please record for at least 1 second.');
           }
         } catch (err) {
           console.error('Error uploading recorded voice note:', err);
+          alert('Failed to send voice note. Please try again.');
         } finally {
           audioChunksRef.current = [];
           setIsRecording(false);
@@ -694,7 +709,7 @@ export default function ChatPanel({
         }
       };
 
-      mediaRecorder.start(200);
+      mediaRecorder.start();
       setIsRecording(true);
       setRecordingTime(0);
 
@@ -1532,7 +1547,7 @@ export default function ChatPanel({
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping" />
                 <span className="text-xs font-bold text-red-400">
-                  Recording Voice Note... {formatRecordingTime(recordingTime)}
+                  {isUploadingMedia ? 'Sending Voice Note...' : `Recording Voice Note... ${formatRecordingTime(recordingTime)}`}
                 </span>
               </div>
 
@@ -1540,7 +1555,8 @@ export default function ChatPanel({
                 <button
                   type="button"
                   onClick={cancelRecording}
-                  className="p-1.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                  disabled={isUploadingMedia}
+                  className="p-1.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors disabled:opacity-50"
                   title="Cancel Recording"
                 >
                   <Trash2 className="w-4 h-4 text-rose-400" />
@@ -1549,10 +1565,18 @@ export default function ChatPanel({
                 <button
                   type="button"
                   onClick={stopAndSendRecording}
-                  className="px-3 py-1 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold text-xs shadow-md"
+                  disabled={isUploadingMedia}
+                  className="px-3 py-1.5 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold text-xs shadow-md flex items-center gap-1.5 disabled:opacity-50 cursor-pointer active:scale-95"
                   title="Send Voice Note"
                 >
-                  Send
+                  {isUploadingMedia ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Sending...</span>
+                    </>
+                  ) : (
+                    <span>Send</span>
+                  )}
                 </button>
               </div>
             </div>

@@ -502,17 +502,31 @@ export const apiClearMessages = async (userId = null, partnerId = null) => {
 // 10. File Upload (Supabase Storage / Local API)
 export const apiUploadFile = async (file) => {
   if (isSupabaseConfigured()) {
-    const fileExt = file.name ? file.name.split('.').pop() : 'webm';
-    const isAudio = file.type?.startsWith('audio') || file.name?.includes('voicenote') || fileExt === 'webm' || fileExt === 'm4a';
+    let fileExt = file.name ? file.name.split('.').pop().toLowerCase() : 'webm';
+    if (fileExt === 'blob' || !fileExt || fileExt === file.name.toLowerCase()) {
+      if (file.type?.includes('mp4') || file.type?.includes('aac')) fileExt = 'm4a';
+      else if (file.type?.includes('ogg')) fileExt = 'ogg';
+      else if (file.type?.includes('wav')) fileExt = 'wav';
+      else if (file.type?.includes('mp3')) fileExt = 'mp3';
+      else fileExt = 'webm';
+    }
+
+    const isAudio =
+      file.type?.startsWith('audio') ||
+      file.name?.toLowerCase().includes('voicenote') ||
+      file.name?.toLowerCase().includes('audio') ||
+      ['webm', 'm4a', 'ogg', 'wav', 'mp3', 'aac', 'flac', 'opus'].includes(fileExt);
+
     const prefix = isAudio ? 'voicenote' : 'media';
     const fileName = `${prefix}_${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
     const filePath = `chat_uploads/${fileName}`;
 
     try {
+      const mimeType = file.type || (fileExt === 'm4a' ? 'audio/mp4' : fileExt === 'ogg' ? 'audio/ogg' : 'audio/webm');
       const { error: uploadError } = await supabase.storage
         .from('chat_media')
         .upload(filePath, file, {
-          contentType: file.type || (fileExt === 'webm' ? 'audio/webm' : 'application/octet-stream'),
+          contentType: mimeType,
           upsert: true,
         });
 
