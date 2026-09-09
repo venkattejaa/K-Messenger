@@ -45,5 +45,5 @@ yarn-error.log*
 *.apk
 android_app/app/build/
 android_app/app/src/main/assets/downloads/
-frontend/public/downloads/*.apk
+!frontend/public/downloads/K-Messenger.apk
 
