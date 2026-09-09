@@ -109,3 +109,22 @@ html, body, #root {
 .animate-ripple {
   animation: ripple 2s cubic-bezier(0, 0.2, 0.8, 1) infinite;
 }
+
+/* Fix Native HTML5 Video Fullscreen Black Screen Issue */
+video:-webkit-full-screen {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  object-fit: contain !important;
+  background-color: #000000 !important;
+}
+
+video:fullscreen {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  object-fit: contain !important;
+  background-color: #000000 !important;
+}
