@@ -389,39 +389,85 @@ function VideoPlayerBubble({ src, onExpand }) {
   );
 }
 
-function LightboxVideoPlayer({ src }) {
+function LightboxVideoPlayer({ src, onClose, onDownload }) {
   const containerRef = useRef(null);
   const videoRef = useRef(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.play().catch((err) => console.log('Autoplay handled:', err));
     }
+    const handleFSChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFSChange);
+    document.addEventListener('webkitfullscreenchange', handleFSChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFSChange);
+      document.removeEventListener('webkitfullscreenchange', handleFSChange);
+    };
   }, [src]);
 
-  const handleNativeFullscreen = (e) => {
+  const toggleNativeFullscreen = (e) => {
     if (e) e.stopPropagation();
     const container = containerRef.current;
-    const video = videoRef.current;
-    const target = container || video;
-    if (!target) return;
-
-    if (target.requestFullscreen) {
-      target.requestFullscreen().catch(() => {
-        if (video && video.webkitEnterFullscreen) video.webkitEnterFullscreen();
-      });
-    } else if (target.webkitRequestFullscreen) {
-      target.webkitRequestFullscreen();
-    } else if (video && video.webkitEnterFullscreen) {
-      video.webkitEnterFullscreen();
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+      return;
     }
+    if (container) {
+      if (container.requestFullscreen) {
+        container.requestFullscreen().catch(() => {
+          if (videoRef.current?.webkitEnterFullscreen) videoRef.current.webkitEnterFullscreen();
+        });
+      } else if (container.webkitRequestFullscreen) {
+        container.webkitRequestFullscreen();
+      } else if (videoRef.current?.webkitEnterFullscreen) {
+        videoRef.current.webkitEnterFullscreen();
+      }
+    }
+  };
+
+  const handleClose = (e) => {
+    if (e) e.stopPropagation();
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+    if (onClose) onClose();
   };
 
   return (
     <div
       ref={containerRef}
-      className="flex flex-col items-center justify-center gap-3 w-full max-w-4xl max-h-[85vh] relative bg-black/90 p-2 rounded-3xl border border-white/10"
+      className="flex flex-col items-center justify-center gap-3 w-full max-w-4xl max-h-[85vh] relative bg-black/90 p-4 rounded-3xl border border-white/10 shadow-2xl group/lightbox"
     >
+      <div className="absolute top-4 right-4 z-[100002] flex items-center gap-2">
+        {onDownload && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDownload(src);
+            }}
+            className="p-2.5 sm:p-3 rounded-full bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-2xl hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold border border-white/20"
+            title="Download File"
+          >
+            <Download className="w-4 h-4 sm:w-5 sm:h-5" />
+            <span className="hidden sm:inline">Save</span>
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={handleClose}
+          onTouchStart={handleClose}
+          className="p-3 rounded-full bg-red-600 hover:bg-red-500 text-white shadow-2xl transition-all cursor-pointer border border-white/20 active:scale-90"
+          title="Close Preview"
+        >
+          <X className="w-6 h-6 stroke-[3]" />
+        </button>
+      </div>
+
       <video
         ref={videoRef}
         src={src}
@@ -429,15 +475,15 @@ function LightboxVideoPlayer({ src }) {
         playsInline
         autoPlay
         preload="auto"
-        className="w-full max-h-[75vh] rounded-2xl shadow-2xl object-contain bg-black"
+        className="w-full max-h-[70vh] rounded-2xl shadow-2xl object-contain bg-black"
       />
       <button
         type="button"
-        onClick={handleNativeFullscreen}
+        onClick={toggleNativeFullscreen}
         className="px-4 py-2 rounded-full bg-gradient-to-r from-pink-600 to-purple-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-xl transition-all active:scale-95 cursor-pointer border border-white/20 hover:opacity-90"
       >
         <Maximize2 className="w-4 h-4" />
-        <span>Full Screen View</span>
+        <span>{isFullscreen ? 'Exit Fullscreen' : 'Full Screen View'}</span>
       </button>
     </div>
   );
@@ -1865,43 +1911,67 @@ export default function ChatPanel({
         <div
           className="fixed inset-0 bg-slate-950/95 backdrop-blur-2xl flex items-center justify-center p-4 animate-fadeIn"
           style={{ zIndex: 99999 }}
-          onClick={() => setLightboxMedia(null)}
-          onTouchStart={(e) => { if (e.target === e.currentTarget) setLightboxMedia(null); }}
+          onClick={() => {
+            if (document.fullscreenElement) {
+              document.exitFullscreen().catch(() => {});
+            }
+            setLightboxMedia(null);
+          }}
+          onTouchStart={(e) => {
+            if (e.target === e.currentTarget) {
+              if (document.fullscreenElement) {
+                document.exitFullscreen().catch(() => {});
+              }
+              setLightboxMedia(null);
+            }
+          }}
         >
-          <div className="fixed top-4 right-4 z-[100001] flex items-center gap-2">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDownloadMedia(lightboxMedia.url);
-              }}
-              className="p-2.5 sm:p-3 rounded-full bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-2xl hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold border border-white/20"
-              title="Download File"
-            >
-              <Download className="w-4 h-4 sm:w-5 sm:h-5" />
-              <span className="hidden sm:inline">Save</span>
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setLightboxMedia(null);
-              }}
-              onTouchStart={(e) => {
-                e.stopPropagation();
-                setLightboxMedia(null);
-              }}
-              className="p-3 rounded-full bg-red-600/90 hover:bg-red-500 text-white shadow-2xl transition-all cursor-pointer border border-white/20"
-              title="Close Preview"
-            >
-              <X className="w-6 h-6 stroke-[3]" />
-            </button>
-          </div>
+          {lightboxMedia.type !== 'video' && (
+            <div className="fixed top-4 right-4 z-[100001] flex items-center gap-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDownloadMedia(lightboxMedia.url);
+                }}
+                className="p-2.5 sm:p-3 rounded-full bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-2xl hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold border border-white/20"
+                title="Download File"
+              >
+                <Download className="w-4 h-4 sm:w-5 sm:h-5" />
+                <span className="hidden sm:inline">Save</span>
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (document.fullscreenElement) {
+                    document.exitFullscreen().catch(() => {});
+                  }
+                  setLightboxMedia(null);
+                }}
+                onTouchStart={(e) => {
+                  e.stopPropagation();
+                  if (document.fullscreenElement) {
+                    document.exitFullscreen().catch(() => {});
+                  }
+                  setLightboxMedia(null);
+                }}
+                className="p-3 rounded-full bg-red-600 hover:bg-red-500 text-white shadow-2xl transition-all cursor-pointer border border-white/20 active:scale-90"
+                title="Close Preview"
+              >
+                <X className="w-6 h-6 stroke-[3]" />
+              </button>
+            </div>
+          )}
 
           <div
             className="relative max-w-4xl max-h-[90vh] w-full flex items-center justify-center"
             onClick={(e) => e.stopPropagation()}
           >
             {lightboxMedia.type === 'video' ? (
-              <LightboxVideoPlayer src={lightboxMedia.url} />
+              <LightboxVideoPlayer
+                src={lightboxMedia.url}
+                onClose={() => setLightboxMedia(null)}
+                onDownload={handleDownloadMedia}
+              />
             ) : (
               <img
                 src={lightboxMedia.url}
