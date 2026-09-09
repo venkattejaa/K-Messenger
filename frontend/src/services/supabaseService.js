@@ -512,13 +512,18 @@ export const apiUploadFile = async (file) => {
         else fileExt = 'webm';
       }
 
-      const isAudio =
-        file.type?.startsWith('audio') ||
-        (file.name && file.name.toLowerCase().includes('voicenote')) ||
-        (file.name && file.name.toLowerCase().includes('audio')) ||
-        ['webm', 'm4a', 'ogg', 'wav', 'mp3', 'aac', 'flac', 'opus'].includes(fileExt);
+      const isVideo =
+        file.type?.startsWith('video') ||
+        (file.name && (file.name.toLowerCase().includes('video') || file.name.toLowerCase().includes('vid_'))) ||
+        ['mp4', 'mov', 'mkv', 'avi', 'ogv', '3gp'].includes(fileExt);
 
-      const prefix = isAudio ? 'voicenote' : 'media';
+      const isAudio = !isVideo && (
+        file.type?.startsWith('audio') ||
+        (file.name && (file.name.toLowerCase().includes('voicenote') || file.name.toLowerCase().includes('audio') || file.name.toLowerCase().includes('voice'))) ||
+        ['m4a', 'ogg', 'wav', 'mp3', 'aac', 'flac', 'opus', 'webm'].includes(fileExt)
+      );
+
+      const prefix = isVideo ? 'video' : isAudio ? 'voicenote' : 'media';
       const fileName = `${prefix}_${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
       const filePath = `chat_uploads/${fileName}`;
 

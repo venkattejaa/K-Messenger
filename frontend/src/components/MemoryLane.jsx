@@ -3,45 +3,61 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { apiGetMessages } from '../services/supabaseService';
 
-function isVideoMedia(url) {
-  if (!url) return false;
-  const l = url.toLowerCase().split('?')[0];
-  if (l.includes('voicenote') || l.includes('voice_') || l.includes('audio_') || l.includes('data:audio')) return false;
-  return (
-    l.endsWith('.mp4') ||
-    l.endsWith('.mov') ||
-    l.endsWith('.webm') ||
-    l.endsWith('.mkv') ||
-    l.endsWith('.avi') ||
-    l.endsWith('.ogv') ||
-    l.endsWith('.3gp') ||
-    l.includes('video_') ||
-    l.includes('video/') ||
-    l.includes('video')
-  );
-}
-
 function isAudioMedia(url) {
   if (!url) return false;
   const l = url.toLowerCase().split('?')[0];
-  if (isVideoMedia(url)) return false;
-  return (
+  if (
+    l.includes('data:audio') ||
+    l.includes('audio/') ||
+    l.includes('audio_') ||
+    l.includes('voicenote') ||
+    l.includes('voice_')
+  ) {
+    return true;
+  }
+  if (
     l.endsWith('.mp3') ||
     l.endsWith('.wav') ||
     l.endsWith('.m4a') ||
     l.endsWith('.ogg') ||
     l.endsWith('.aac') ||
     l.endsWith('.flac') ||
-    l.endsWith('.opus') ||
-    l.includes('voicenote') ||
-    l.includes('voice_') ||
-    l.includes('audio_') ||
-    l.includes('audio/') ||
-    l.includes('data:audio')
-  );
+    l.endsWith('.opus')
+  ) {
+    return true;
+  }
+  if (l.endsWith('.webm') && !l.includes('video') && !l.includes('vid_') && !l.includes('movie')) {
+    return true;
+  }
+  return false;
+}
+
+function isVideoMedia(url) {
+  if (!url) return false;
+  const l = url.toLowerCase().split('?')[0];
+  if (isAudioMedia(url)) {
+    return false;
+  }
+  if (
+    l.includes('data:video') ||
+    l.includes('video/') ||
+    l.includes('video_') ||
+    l.includes('vid_') ||
+    l.endsWith('.mp4') ||
+    l.endsWith('.mov') ||
+    l.endsWith('.mkv') ||
+    l.endsWith('.avi') ||
+    l.endsWith('.ogv') ||
+    l.endsWith('.3gp') ||
+    l.endsWith('.webm')
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function LightboxVideoPlayer({ src }) {
+  const containerRef = useRef(null);
   const videoRef = useRef(null);
 
   useEffect(() => {
@@ -50,20 +66,29 @@ function LightboxVideoPlayer({ src }) {
     }
   }, [src]);
 
-  const handleNativeFullscreen = () => {
-    const v = videoRef.current;
-    if (!v) return;
-    if (v.requestFullscreen) {
-      v.requestFullscreen();
-    } else if (v.webkitRequestFullscreen) {
-      v.webkitRequestFullscreen();
-    } else if (v.webkitEnterFullscreen) {
-      v.webkitEnterFullscreen();
+  const handleNativeFullscreen = (e) => {
+    if (e) e.stopPropagation();
+    const container = containerRef.current;
+    const video = videoRef.current;
+    const target = container || video;
+    if (!target) return;
+
+    if (target.requestFullscreen) {
+      target.requestFullscreen().catch(() => {
+        if (video && video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+      });
+    } else if (target.webkitRequestFullscreen) {
+      target.webkitRequestFullscreen();
+    } else if (video && video.webkitEnterFullscreen) {
+      video.webkitEnterFullscreen();
     }
   };
 
   return (
-    <div className="flex flex-col items-center justify-center gap-3 max-w-full max-h-[85vh]">
+    <div
+      ref={containerRef}
+      className="flex flex-col items-center justify-center gap-3 w-full max-w-4xl max-h-[85vh] relative bg-black/90 p-2 rounded-3xl border border-white/10"
+    >
       <video
         ref={videoRef}
         src={src}
@@ -71,12 +96,12 @@ function LightboxVideoPlayer({ src }) {
         playsInline
         autoPlay
         preload="auto"
-        className="max-w-full max-h-[75vh] rounded-2xl shadow-2xl"
+        className="w-full max-h-[75vh] rounded-2xl shadow-2xl object-contain bg-black"
       />
       <button
         type="button"
         onClick={handleNativeFullscreen}
-        className="px-4 py-2 rounded-full bg-gradient-to-r from-pink-600 to-purple-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-xl transition-all active:scale-95 cursor-pointer border border-white/20"
+        className="px-4 py-2 rounded-full bg-gradient-to-r from-pink-600 to-purple-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-xl transition-all active:scale-95 cursor-pointer border border-white/20 hover:opacity-90"
       >
         <Maximize2 className="w-4 h-4" />
         <span>Full Screen View</span>
