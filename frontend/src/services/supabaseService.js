@@ -503,7 +503,9 @@ export const apiClearMessages = async (userId = null, partnerId = null) => {
 export const apiUploadFile = async (file) => {
   if (isSupabaseConfigured()) {
     const fileExt = file.name ? file.name.split('.').pop() : 'webm';
-    const fileName = `media_${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
+    const isAudio = file.type?.startsWith('audio') || file.name?.includes('voicenote') || fileExt === 'webm' || fileExt === 'm4a';
+    const prefix = isAudio ? 'voicenote' : 'media';
+    const fileName = `${prefix}_${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
     const filePath = `chat_uploads/${fileName}`;
 
     try {

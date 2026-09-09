@@ -264,7 +264,7 @@ export default function ChatPanel({
 
   const isAudioMedia = (url) => {
     if (!url) return false;
-    const l = url.toLowerCase();
+    const l = url.toLowerCase().split('?')[0];
     return (
       l.endsWith('.webm') ||
       l.endsWith('.mp3') ||
@@ -274,7 +274,9 @@ export default function ChatPanel({
       l.endsWith('.aac') ||
       l.endsWith('.flac') ||
       l.includes('voicenote') ||
-      l.includes('audio_')
+      l.includes('audio_') ||
+      l.includes('audio/') ||
+      l.includes('data:audio')
     );
   };
 
