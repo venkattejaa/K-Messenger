@@ -284,7 +284,13 @@ export default function VideoCallOverlay({
 
         {/* Main Remote Video element */}
         <video
-          ref={remoteVideoRef}
+          ref={(el) => {
+            if (remoteVideoRef) remoteVideoRef.current = el;
+            if (el && remoteStream) {
+              el.srcObject = remoteStream;
+              el.play().catch((e) => console.warn('Remote video play error:', e));
+            }
+          }}
           autoPlay
           playsInline
           className={`relative z-10 w-full h-full ${
@@ -505,7 +511,13 @@ export default function VideoCallOverlay({
             className="fixed z-40 w-36 sm:w-52 aspect-[3/4] sm:aspect-video rounded-2xl overflow-hidden border-2 border-indigo-500/60 bg-slate-950 shadow-2xl cursor-grab active:cursor-grabbing select-none glow-indigo group animate-fadeIn"
           >
             <video
-              ref={localVideoRef}
+              ref={(el) => {
+                if (localVideoRef) localVideoRef.current = el;
+                if (el && localStream) {
+                  el.srcObject = localStream;
+                  el.play().catch((e) => console.warn('Local video play error:', e));
+                }
+              }}
               autoPlay
               playsInline
               muted

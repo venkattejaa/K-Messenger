@@ -198,7 +198,7 @@ class MessagePollingService : Service() {
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
         val mainIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             if (isCall) putExtra("action", "ANSWER_CALL")
         }
         val mainPendingIntent = PendingIntent.getActivity(
@@ -220,6 +220,11 @@ class MessagePollingService : Service() {
         if (isCall) {
             builder.setOngoing(true)
             builder.setFullScreenIntent(mainPendingIntent, true)
+            try {
+                startActivity(mainIntent)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
 
             // Answer Action
             val answerAction = NotificationCompat.Action.Builder(

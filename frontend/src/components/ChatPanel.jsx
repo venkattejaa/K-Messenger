@@ -1,7 +1,7 @@
 import {
   MessageSquare, Image, Video, Phone, Send, Loader2, ShieldCheck, User,
   CheckCheck, Paperclip, Settings, Layers, Heart, Smile, Sparkles, Info,
-  Edit3, Volume2, VolumeX, Mic, Square, Play, Pause, Trash2, Check, X, MoreVertical, Copy, Reply, Download, Maximize2
+  Edit3, Volume2, VolumeX, Mic, Square, Play, Pause, Trash2, Check, X, MoreVertical, Copy, Reply, Download, Maximize2, FileText, File
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
@@ -30,6 +30,7 @@ function AudioPlayerBubble({ src, isMe }) {
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const audioRef = useRef(null);
+  const waveformRef = useRef(null);
 
   useEffect(() => {
     setIsPlaying(false);
@@ -38,12 +39,25 @@ function AudioPlayerBubble({ src, isMe }) {
     setDuration(0);
   }, [src]);
 
+  // Global listener to stop other playing audio voice notes
+  useEffect(() => {
+    const handleOtherAudioPlay = (e) => {
+      if (e.detail?.src !== src && audioRef.current) {
+        audioRef.current.pause();
+        setIsPlaying(false);
+      }
+    };
+    window.addEventListener('kmessenger_audio_play', handleOtherAudioPlay);
+    return () => window.removeEventListener('kmessenger_audio_play', handleOtherAudioPlay);
+  }, [src]);
+
   const togglePlay = () => {
     if (!audioRef.current) return;
     if (isPlaying) {
       audioRef.current.pause();
       setIsPlaying(false);
     } else {
+      window.dispatchEvent(new CustomEvent('kmessenger_audio_play', { detail: { src } }));
       audioRef.current.play().catch((e) => console.error('Audio playback error:', e));
       setIsPlaying(true);
     }
@@ -77,6 +91,20 @@ function AudioPlayerBubble({ src, isMe }) {
     setCurrentTime(0);
   };
 
+  const handleSeek = (e) => {
+    if (!audioRef.current || !waveformRef.current) return;
+    const rect = waveformRef.current.getBoundingClientRect();
+    const clickX = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+    const pct = Math.max(0, Math.min(1, clickX / rect.width));
+    const totalDur = duration > 0 ? duration : audioRef.current.duration || 0;
+    if (totalDur > 0) {
+      const newTime = pct * totalDur;
+      audioRef.current.currentTime = newTime;
+      setCurrentTime(newTime);
+      setProgress(pct * 100);
+    }
+  };
+
   const formatSeconds = (sec) => {
     if (isNaN(sec) || !isFinite(sec) || sec <= 0) return '0:00';
     const m = Math.floor(sec / 60);
@@ -98,7 +126,7 @@ function AudioPlayerBubble({ src, isMe }) {
       <button
         type="button"
         onClick={togglePlay}
-        className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-transform active:scale-95 shadow-md ${
+        className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-transform active:scale-95 shadow-md cursor-pointer ${
           isMe
             ? 'bg-white text-purple-600 hover:bg-slate-100'
             : 'bg-purple-600 text-white hover:bg-purple-500'
@@ -108,19 +136,28 @@ function AudioPlayerBubble({ src, isMe }) {
       </button>
 
       <div className="flex-1 flex flex-col gap-1">
-        {/* Animated Visualizer Waveform Bar */}
-        <div className="flex items-center gap-0.5 h-6">
+        {/* Interactive & Animated Waveform Equalizer Bar */}
+        <div
+          ref={waveformRef}
+          onClick={handleSeek}
+          onTouchStart={handleSeek}
+          className="flex items-center gap-0.5 h-6 cursor-pointer group py-1"
+          title="Click to seek timeline"
+        >
           {[40, 70, 30, 90, 50, 80, 100, 40, 60, 85, 45, 75, 35, 95, 60, 40, 80, 50].map((h, i) => {
             const active = (i / 18) * 100 <= progress;
             return (
               <div
                 key={i}
-                style={{ height: `${h}%` }}
+                style={{
+                  height: `${h}%`,
+                  animationDelay: `${i * 0.08}s`,
+                }}
                 className={`w-1 rounded-full transition-all duration-150 ${
                   active
-                    ? isMe ? 'bg-white' : 'bg-purple-400'
-                    : isMe ? 'bg-white/30' : 'bg-slate-700'
-                } ${isPlaying && active ? 'animate-pulse scale-y-125' : ''}`}
+                    ? isMe ? 'bg-white shadow-sm' : 'bg-purple-400 shadow-sm'
+                    : isMe ? 'bg-white/30 hover:bg-white/50' : 'bg-slate-700 hover:bg-slate-600'
+                } ${isPlaying && active ? 'animate-bounce' : ''}`}
               />
             );
           })}
@@ -271,6 +308,44 @@ export default function ChatPanel({
     );
   };
 
+  const isDocumentMedia = (url) => {
+    if (!url) return false;
+    const l = url.toLowerCase().split('?')[0];
+    return (
+      l.endsWith('.pdf') ||
+      l.endsWith('.doc') ||
+      l.endsWith('.docx') ||
+      l.endsWith('.xls') ||
+      l.endsWith('.xlsx') ||
+      l.endsWith('.ppt') ||
+      l.endsWith('.pptx') ||
+      l.endsWith('.zip') ||
+      l.endsWith('.rar') ||
+      l.endsWith('.txt') ||
+      l.endsWith('.csv') ||
+      l.includes('document_') ||
+      l.includes('file_')
+    );
+  };
+
+  const getFileNameFromUrl = (url) => {
+    if (!url) return 'Document';
+    try {
+      const parts = url.split('/');
+      const last = parts[parts.length - 1].split('?')[0];
+      return decodeURIComponent(last) || 'Document';
+    } catch (e) {
+      return 'Document';
+    }
+  };
+
+  const getFileExtension = (filename) => {
+    if (!filename) return 'FILE';
+    const parts = filename.split('.');
+    if (parts.length > 1) return parts[parts.length - 1].toUpperCase();
+    return 'FILE';
+  };
+
   const getAudioUrl = (msg) => {
     if (!msg) return null;
     if (msg.media_url && isAudioMedia(msg.media_url)) return msg.media_url;
@@ -285,15 +360,22 @@ export default function ChatPanel({
     return null;
   };
 
+  const getDocumentUrl = (msg) => {
+    if (!msg) return null;
+    if (msg.media_url && isDocumentMedia(msg.media_url)) return msg.media_url;
+    if (msg.text_content && isDocumentMedia(msg.text_content)) return msg.text_content;
+    return null;
+  };
+
   const getImageUrl = (msg) => {
     if (!msg) return null;
-    if (msg.media_url && !isAudioMedia(msg.media_url) && !isVideoMedia(msg.media_url)) {
+    if (msg.media_url && !isAudioMedia(msg.media_url) && !isVideoMedia(msg.media_url) && !isDocumentMedia(msg.media_url)) {
       return msg.media_url;
     }
     if (msg.text_content) {
       const trimmed = msg.text_content.trim();
       if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-        if (!isAudioMedia(trimmed) && !isVideoMedia(trimmed)) {
+        if (!isAudioMedia(trimmed) && !isVideoMedia(trimmed) && !isDocumentMedia(trimmed)) {
           if (isImageMedia(trimmed) || trimmed.includes('/chat_media/') || trimmed.includes('/chat_uploads/')) {
             return trimmed;
           }
@@ -304,7 +386,7 @@ export default function ChatPanel({
   };
 
   const getMediaUrl = (msg) => {
-    return getAudioUrl(msg) || getVideoUrl(msg) || getImageUrl(msg);
+    return getAudioUrl(msg) || getVideoUrl(msg) || getImageUrl(msg) || getDocumentUrl(msg);
   };
 
   const handleDownloadMedia = async (url) => {
@@ -668,12 +750,22 @@ export default function ChatPanel({
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      const previewUrl = URL.createObjectURL(file);
+      const isVid = file.type.startsWith('video') || isVideoMedia(file.name);
+      const isImg = file.type.startsWith('image') || isImageMedia(file.name);
+      const isAud = file.type.startsWith('audio') || isAudioMedia(file.name);
+
+      let mediaType = 'document';
+      if (isVid) mediaType = 'video/mp4';
+      else if (isImg) mediaType = 'image/jpeg';
+      else if (isAud) mediaType = 'audio/webm';
+
+      const previewUrl = (isImg || isVid) ? URL.createObjectURL(file) : null;
       setPreviewMediaFile({
         file,
         previewUrl,
-        type: file.type || (file.name.endsWith('.mp4') ? 'video/mp4' : 'image/jpeg'),
+        type: mediaType,
         fileName: file.name,
+        fileSize: file.size,
       });
       e.target.value = '';
     }
@@ -951,6 +1043,7 @@ export default function ChatPanel({
             const audioUrl = getAudioUrl(msg);
             const videoUrl = getVideoUrl(msg);
             const imageUrl = getImageUrl(msg);
+            const documentUrl = getDocumentUrl(msg);
             const mediaUrlForDownload = getMediaUrl(msg);
 
             const msgKey = String(msg.id || msg.temp_id || index);
@@ -1059,6 +1152,34 @@ export default function ChatPanel({
                           <Maximize2 className="w-4 h-4 text-pink-300" />
                         </div>
                       </div>
+                    ) : documentUrl ? (
+                      /* Document Card */
+                      <div className="mb-2 p-2.5 rounded-2xl bg-black/40 border border-white/10 flex items-center justify-between gap-3 min-w-[200px] group/doc">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-10 h-10 rounded-xl bg-pink-500/20 border border-pink-500/30 flex items-center justify-center flex-shrink-0">
+                            <FileText className="w-5 h-5 text-pink-300" />
+                          </div>
+                          <div className="flex flex-col min-w-0">
+                            <span className="font-bold text-xs text-slate-100 truncate max-w-[140px] sm:max-w-[180px]" title={getFileNameFromUrl(documentUrl)}>
+                              {getFileNameFromUrl(documentUrl)}
+                            </span>
+                            <span className="text-[10px] text-pink-300 font-semibold uppercase tracking-wider">
+                              {getFileExtension(getFileNameFromUrl(documentUrl))} Document
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDownloadMedia(documentUrl);
+                          }}
+                          className="p-2 rounded-xl bg-pink-600 hover:bg-pink-500 text-white transition-all shadow-md cursor-pointer flex-shrink-0"
+                          title="Download File"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                      </div>
                     ) : null}
 
                     {/* Inline Editing Mode */}
@@ -1080,15 +1201,15 @@ export default function ChatPanel({
                         </button>
                         <button
                           onClick={handleCancelEdit}
-                          className="p-1 rounded-lg bg-slate-700 text-slate-200 hover:bg-slate-600 cursor-pointer"
+                          className="p-1 rounded-lg bg-slate-700 text-[#27272a] hover:bg-slate-600 cursor-pointer"
                           title="Cancel"
                         >
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     ) : (
-                      /* Text Content (only if not an audio, video, or image player) */
-                      msg.text_content && msg.text_content !== audioUrl && msg.text_content !== videoUrl && msg.text_content !== imageUrl && (
+                      /* Text Content (only if not audio, video, image, or document) */
+                      msg.text_content && msg.text_content !== audioUrl && msg.text_content !== videoUrl && msg.text_content !== imageUrl && msg.text_content !== documentUrl && (
                         <p className="text-sm leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-medium">
                           {msg.text_content}
                         </p>
@@ -1338,7 +1459,7 @@ export default function ChatPanel({
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,video/*,audio/*"
+            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
             onChange={handleFileChange}
             className="hidden"
             id="file-upload"
@@ -1531,7 +1652,9 @@ export default function ChatPanel({
             <div className="flex items-center justify-between pb-3 border-b border-[#27272a] mb-4">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-pink-400" />
-                <span>Preview {previewMediaFile.type.startsWith('video') ? 'Video' : 'Photo'}</span>
+                <span>
+                  Preview {previewMediaFile.type.startsWith('video') ? 'Video' : previewMediaFile.type.startsWith('image') ? 'Photo' : previewMediaFile.type.startsWith('audio') ? 'Audio' : 'Document'}
+                </span>
               </h3>
               <button
                 onClick={() => setPreviewMediaFile(null)}
@@ -1541,12 +1664,36 @@ export default function ChatPanel({
               </button>
             </div>
 
-            {/* Media Preview Container */}
-            <div className="max-h-72 overflow-hidden rounded-2xl bg-black flex items-center justify-center mb-4 border border-[#27272a]">
+            {/* Media/Document Preview Container */}
+            <div className="max-h-72 overflow-hidden rounded-2xl bg-black flex items-center justify-center mb-4 border border-[#27272a] p-4">
               {previewMediaFile.type.startsWith('video') ? (
                 <video src={previewMediaFile.previewUrl} controls playsInline className="max-h-72 max-w-full rounded-2xl" />
-              ) : (
+              ) : previewMediaFile.type.startsWith('image') ? (
                 <img src={previewMediaFile.previewUrl} alt="Preview" className="max-h-72 max-w-full object-contain rounded-2xl" />
+              ) : (
+                /* Document or Audio File Card Preview */
+                <div className="flex flex-col items-center justify-center py-6 px-4 text-center gap-3 w-full bg-[#18181b]/80 border border-slate-800 rounded-2xl">
+                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-pink-500 via-purple-600 to-indigo-600 p-0.5 shadow-lg">
+                    <div className="w-full h-full rounded-[14px] bg-[#121212] flex items-center justify-center text-pink-400">
+                      <FileText className="w-7 h-7" />
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1 max-w-full">
+                    <span className="font-bold text-sm text-white truncate max-w-xs" title={previewMediaFile.fileName}>
+                      {previewMediaFile.fileName}
+                    </span>
+                    <div className="flex items-center justify-center gap-2 text-xs text-slate-400">
+                      <span className="bg-purple-900/60 text-purple-300 px-2 py-0.5 rounded-full text-[10px] font-bold border border-purple-700/50">
+                        {getFileExtension(previewMediaFile.fileName)}
+                      </span>
+                      {previewMediaFile.fileSize && (
+                        <span>
+                          {(previewMediaFile.fileSize / (1024 * 1024)).toFixed(2)} MB
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
 
@@ -1565,7 +1712,9 @@ export default function ChatPanel({
                 className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 text-white font-bold text-xs shadow-lg hover:from-pink-500 hover:to-purple-500 transition-all flex items-center justify-center gap-1.5 active:scale-95"
               >
                 <Send className="w-4 h-4" />
-                <span>Send {previewMediaFile.type.startsWith('video') ? 'Video' : 'Photo'}</span>
+                <span>
+                  Send {previewMediaFile.type.startsWith('video') ? 'Video' : previewMediaFile.type.startsWith('image') ? 'Photo' : 'File'}
+                </span>
               </button>
             </div>
           </div>
