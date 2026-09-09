@@ -3,7 +3,7 @@ import {
   CheckCheck, Paperclip, Settings, Layers, Heart, Smile, Sparkles, Info,
   Edit3, Volume2, VolumeX, Mic, Square, Play, Pause, Trash2, Check, X, MoreVertical, Copy, Reply, Download, Maximize2, FileText, File
 } from 'lucide-react';
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 import NicknameModal from './NicknameModal';
 import { playNotificationSound } from '../utils/notificationSound';
@@ -24,6 +24,153 @@ function formatSeenAgo(seenIso) {
   return `Seen ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
 
+function formatRecordingTime(sec) {
+  if (isNaN(sec) || !isFinite(sec) || sec <= 0) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+function formatTime(iso) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function isAudioMedia(url) {
+  if (!url) return false;
+  const l = url.toLowerCase().split('?')[0];
+  return (
+    l.endsWith('.webm') ||
+    l.endsWith('.mp3') ||
+    l.endsWith('.wav') ||
+    l.endsWith('.m4a') ||
+    l.endsWith('.ogg') ||
+    l.endsWith('.aac') ||
+    l.endsWith('.flac') ||
+    l.endsWith('.opus') ||
+    l.includes('voicenote') ||
+    l.includes('voice_') ||
+    l.includes('audio_') ||
+    l.includes('audio/') ||
+    l.includes('audio') ||
+    l.includes('data:audio')
+  );
+}
+
+function isVideoMedia(url) {
+  if (!url) return false;
+  const l = url.toLowerCase().split('?')[0];
+  return (
+    l.endsWith('.mp4') ||
+    l.endsWith('.mov') ||
+    l.endsWith('.mkv') ||
+    l.endsWith('.avi') ||
+    l.includes('video_')
+  );
+}
+
+function isImageMedia(url) {
+  if (!url) return false;
+  const l = url.toLowerCase().split('?')[0];
+  return (
+    l.endsWith('.jpg') ||
+    l.endsWith('.jpeg') ||
+    l.endsWith('.png') ||
+    l.endsWith('.gif') ||
+    l.endsWith('.webp') ||
+    l.endsWith('.heic') ||
+    l.endsWith('.heif') ||
+    l.endsWith('.bmp') ||
+    l.endsWith('.svg') ||
+    l.includes('image_') ||
+    l.includes('photo_') ||
+    l.includes('img_')
+  );
+}
+
+function isDocumentMedia(url) {
+  if (!url) return false;
+  const l = url.toLowerCase().split('?')[0];
+  return (
+    l.endsWith('.pdf') ||
+    l.endsWith('.doc') ||
+    l.endsWith('.docx') ||
+    l.endsWith('.xls') ||
+    l.endsWith('.xlsx') ||
+    l.endsWith('.ppt') ||
+    l.endsWith('.pptx') ||
+    l.endsWith('.zip') ||
+    l.endsWith('.rar') ||
+    l.endsWith('.txt') ||
+    l.endsWith('.csv') ||
+    l.includes('document_') ||
+    l.includes('file_')
+  );
+}
+
+function getFileNameFromUrl(url) {
+  if (!url) return 'Document';
+  try {
+    const parts = url.split('/');
+    const last = parts[parts.length - 1].split('?')[0];
+    return decodeURIComponent(last) || 'Document';
+  } catch (e) {
+    return 'Document';
+  }
+}
+
+function getFileExtension(filename) {
+  if (!filename) return 'FILE';
+  const parts = filename.split('.');
+  if (parts.length > 1) return parts[parts.length - 1].toUpperCase();
+  return 'FILE';
+}
+
+function getAudioUrl(msg) {
+  if (!msg) return null;
+  if (msg.media_url && isAudioMedia(msg.media_url)) return msg.media_url;
+  if (msg.text_content && isAudioMedia(msg.text_content)) return msg.text_content;
+  return null;
+}
+
+function getVideoUrl(msg) {
+  if (!msg) return null;
+  if (msg.media_url && isVideoMedia(msg.media_url)) return msg.media_url;
+  if (msg.text_content && isVideoMedia(msg.text_content)) return msg.text_content;
+  return null;
+}
+
+function getDocumentUrl(msg) {
+  if (!msg) return null;
+  if (msg.media_url && isDocumentMedia(msg.media_url)) return msg.media_url;
+  if (msg.text_content && isDocumentMedia(msg.text_content)) return msg.text_content;
+  return null;
+}
+
+function getImageUrl(msg) {
+  if (!msg) return null;
+  const url = msg.media_url;
+  if (url) {
+    if (isAudioMedia(url) || isVideoMedia(url) || isDocumentMedia(url)) return null;
+    if (url.includes('voicenote') || url.includes('audio_') || url.includes('data:audio')) return null;
+    return url;
+  }
+  if (msg.text_content) {
+    const trimmed = msg.text_content.trim();
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      if (!isAudioMedia(trimmed) && !isVideoMedia(trimmed) && !isDocumentMedia(trimmed)) {
+        if (isImageMedia(trimmed)) return trimmed;
+      }
+    }
+  }
+  return null;
+}
+
+function getMediaUrl(msg) {
+  return getAudioUrl(msg) || getVideoUrl(msg) || getImageUrl(msg) || getDocumentUrl(msg);
+}
+
 function AudioPlayerBubble({ src, isMe }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -39,7 +186,6 @@ function AudioPlayerBubble({ src, isMe }) {
     setDuration(0);
   }, [src]);
 
-  // Global listener to stop other playing audio voice notes
   useEffect(() => {
     const handleOtherAudioPlay = (e) => {
       if (e.detail?.src !== src && audioRef.current) {
@@ -105,13 +251,6 @@ function AudioPlayerBubble({ src, isMe }) {
     }
   };
 
-  const formatSeconds = (sec) => {
-    if (isNaN(sec) || !isFinite(sec) || sec <= 0) return '0:00';
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return `${m}:${s < 10 ? '0' : ''}${s}`;
-  };
-
   return (
     <div className="flex items-center gap-3 py-1 px-1 min-w-[200px] sm:min-w-[240px]">
       <audio
@@ -136,7 +275,6 @@ function AudioPlayerBubble({ src, isMe }) {
       </button>
 
       <div className="flex-1 flex flex-col gap-1">
-        {/* Interactive & Animated Waveform Equalizer Bar */}
         <div
           ref={waveformRef}
           onClick={handleSeek}
@@ -163,13 +301,731 @@ function AudioPlayerBubble({ src, isMe }) {
           })}
         </div>
         <div className={`flex justify-between text-[10px] font-semibold ${isMe ? 'text-pink-100/90' : 'text-slate-400'}`}>
-          <span>{formatSeconds(currentTime)}</span>
-          <span>{formatSeconds(duration || currentTime)}</span>
+          <span>{formatRecordingTime(currentTime)}</span>
+          <span>{formatRecordingTime(duration || currentTime)}</span>
         </div>
       </div>
     </div>
   );
 }
+
+// Memoized Individual Message Card Component to eliminate re-rendering 600+ DOM nodes
+const MessageItem = memo(function MessageItem({
+  msg,
+  index,
+  showDateHeader,
+  isMe,
+  partnerDisplayName,
+  currentUserId,
+  partnerSeenIso,
+  highlightedMsgId,
+  editingMsgId,
+  editingText,
+  setEditingText,
+  handleSaveEdit,
+  handleCancelEdit,
+  activeActionMsgId,
+  popoverPlacement,
+  toggleActionMenu,
+  handleTouchStart,
+  handleTouchEndOrMove,
+  handleDoubleTap,
+  handleStartReply,
+  handleJumpToMessage,
+  handleDownloadMedia,
+  setLightboxMedia,
+  copiedMsgId,
+  handleCopyText,
+  handleStartEdit,
+  onUnsendMessage,
+  onReactMessage,
+}) {
+  const rawReactions = { ...(msg.reactions || {}) };
+  delete rawReactions._seen;
+  const replyData = rawReactions._reply || null;
+  delete rawReactions._reply;
+
+  const reactionEntries = Object.entries(rawReactions);
+  const isEditing = editingMsgId === msg.id;
+
+  // Filter out WebRTC CALL_SIGNAL messages
+  if (msg.text_content && msg.text_content.startsWith('CALL_SIGNAL:')) {
+    return null;
+  }
+
+  // Render Call History System Record
+  if (msg.text_content && msg.text_content.startsWith('CALL_RECORD:')) {
+    const parts = msg.text_content.split(':');
+    const cType = parts[1] || 'video';
+    const cDuration = parseInt(parts[2] || '0', 10);
+    const cStatus = parts[3] || 'completed';
+    const isCaller = msg.sender_id === currentUserId;
+
+    let callTitle = '';
+    let callSubtext = '';
+
+    if (isCaller) {
+      if (cStatus === 'completed' && cDuration > 0) {
+        callTitle = `Outgoing ${cType === 'video' ? 'Video' : 'Audio'} Call`;
+        callSubtext = `You called ${partnerDisplayName} • ${formatRecordingTime(cDuration)}`;
+      } else if (cStatus === 'missed' || cStatus === 'unanswered') {
+        callTitle = `Cancelled ${cType === 'video' ? 'Video' : 'Audio'} Call`;
+        callSubtext = `No answer from ${partnerDisplayName}`;
+      } else {
+        callTitle = `Outgoing ${cType === 'video' ? 'Video' : 'Audio'} Call`;
+        callSubtext = `Call declined by ${partnerDisplayName}`;
+      }
+    } else {
+      if (cStatus === 'completed' && cDuration > 0) {
+        callTitle = `Incoming ${cType === 'video' ? 'Video' : 'Audio'} Call`;
+        callSubtext = `${partnerDisplayName} called you • ${formatRecordingTime(cDuration)}`;
+      } else if (cStatus === 'missed' || cStatus === 'unanswered') {
+        callTitle = `Missed ${cType === 'video' ? 'Video' : 'Audio'} Call`;
+        callSubtext = `Missed call from ${partnerDisplayName}`;
+      } else {
+        callTitle = `Declined ${cType === 'video' ? 'Video' : 'Audio'} Call`;
+        callSubtext = `Declined call from ${partnerDisplayName}`;
+      }
+    }
+
+    return (
+      <div key={msg.id || index} className="space-y-1 my-2">
+        {showDateHeader && (
+          <div className="flex items-center justify-center my-3">
+            <span className="px-3 py-1 rounded-full text-[10px] font-semibold text-slate-400 bg-[#121212] border border-[#262626]">
+              {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} •{' '}
+              {new Date(msg.timestamp).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
+            </span>
+          </div>
+        )}
+        <div className="flex items-center justify-center my-1.5">
+          <div className="flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-[#121824]/90 border border-slate-800/90 shadow-lg text-xs max-w-[90%] sm:max-w-md">
+            <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
+              cStatus === 'missed' || cStatus === 'declined' ? 'bg-rose-500/20 text-rose-400' : 'bg-indigo-500/20 text-indigo-400'
+            }`}>
+              {cType === 'audio' ? <Phone className="w-4.5 h-4.5" /> : <Video className="w-4.5 h-4.5" />}
+            </div>
+            <div className="flex flex-col min-w-0">
+              <span className="font-extrabold text-slate-100 truncate">
+                {callTitle}
+              </span>
+              <span className="text-[11px] text-slate-400 font-semibold truncate">
+                {callSubtext} • {formatTime(msg.timestamp)}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const audioUrl = getAudioUrl(msg);
+  const videoUrl = getVideoUrl(msg);
+  const imageUrl = getImageUrl(msg);
+  const documentUrl = getDocumentUrl(msg);
+  const mediaUrlForDownload = getMediaUrl(msg);
+
+  const msgKey = String(msg.id || msg.temp_id || index);
+  const isHighlighted = highlightedMsgId && String(highlightedMsgId) === msgKey;
+
+  return (
+    <div
+      key={msgKey}
+      id={`msg-${msgKey}`}
+      className={`space-y-1 transition-all duration-300 rounded-3xl p-1 ${
+        isHighlighted ? 'bg-pink-500/30 ring-4 ring-pink-500 scale-[1.02] shadow-2xl z-20' : ''
+      }`}
+    >
+      {showDateHeader && (
+        <div className="flex items-center justify-center my-3">
+          <span className="px-3 py-1 rounded-full text-[10px] font-semibold text-slate-400 bg-[#121212] border border-[#262626]">
+            {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} •{' '}
+            {new Date(msg.timestamp).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
+          </span>
+        </div>
+      )}
+
+      <div className={`flex items-end gap-1.5 group relative ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+        {!isMe && (
+          <div className="w-7 h-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-purple-300 flex-shrink-0 mb-1">
+            {partnerDisplayName.charAt(0).toUpperCase()}
+          </div>
+        )}
+
+        <div
+          onDoubleClick={() => msg.id && handleDoubleTap(msg.id)}
+          onTouchStart={(e) => msg.id && handleTouchStart(msg.id, e)}
+          onTouchEnd={handleTouchEndOrMove}
+          onTouchMove={handleTouchEndOrMove}
+          className={`relative px-4 py-2.5 max-w-[78%] sm:max-w-[65%] rounded-3xl shadow-md transition-all select-none touch-manipulation overflow-visible ${
+            isMe
+              ? 'bg-gradient-to-r from-pink-500 via-purple-600 to-indigo-600 text-white rounded-br-xs shadow-pink-950/20'
+              : 'bg-[#262626] text-slate-100 border border-[#333] rounded-bl-xs shadow-slate-950/30'
+          }`}
+        >
+          {replyData && (
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                handleJumpToMessage(replyData.id);
+              }}
+              className={`mb-2 p-2 rounded-2xl text-xs flex flex-col gap-0.5 cursor-pointer transition-all hover:opacity-90 border-l-4 ${
+                isMe
+                  ? 'bg-black/30 text-white/90 border-pink-300'
+                  : 'bg-black/40 text-slate-200 border-purple-400'
+              }`}
+            >
+              <div className="flex items-center gap-1 font-bold text-[11px] text-pink-300">
+                <Reply className="w-3 h-3" />
+                <span>{replyData.sender_name}</span>
+              </div>
+              <p className="line-clamp-2 text-[11px] opacity-90 break-words font-normal">
+                {replyData.text || (replyData.media_url ? 'Attachment' : '')}
+              </p>
+            </div>
+          )}
+
+          {audioUrl ? (
+            <AudioPlayerBubble src={audioUrl} isMe={isMe} />
+          ) : videoUrl ? (
+            <div className="mb-2 overflow-hidden rounded-2xl border border-white/10 relative group/vid cursor-pointer">
+              <video
+                src={videoUrl}
+                controls
+                playsInline
+                preload="metadata"
+                className="max-w-full max-h-72 rounded-2xl object-cover"
+              />
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setLightboxMedia({ url: videoUrl, type: 'video' });
+                }}
+                className="absolute top-2 right-2 p-1.5 rounded-xl bg-black/60 backdrop-blur-md text-white hover:bg-black/80 transition-all cursor-pointer opacity-90 hover:opacity-100 shadow-md"
+                title="Expand Video Full Screen"
+              >
+                <Maximize2 className="w-4 h-4 text-pink-300" />
+              </button>
+            </div>
+          ) : imageUrl ? (
+            <div
+              className="mb-2 overflow-hidden rounded-2xl border border-white/10 group/img cursor-pointer relative"
+              onClick={(e) => {
+                e.stopPropagation();
+                setLightboxMedia({ url: imageUrl, type: 'image' });
+              }}
+            >
+              <img
+                src={imageUrl}
+                alt="Shared media"
+                className="max-w-full max-h-72 object-cover rounded-2xl transition-transform duration-300 group-hover/img:scale-105"
+              />
+              <div className="absolute top-2 right-2 p-1.5 rounded-xl bg-black/60 backdrop-blur-md text-white opacity-0 group-hover/img:opacity-100 transition-opacity shadow-md">
+                <Maximize2 className="w-4 h-4 text-pink-300" />
+              </div>
+            </div>
+          ) : documentUrl ? (
+            <div className="mb-2 p-2.5 rounded-2xl bg-black/40 border border-white/10 flex items-center justify-between gap-3 min-w-[200px] group/doc">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-pink-500/20 border border-pink-500/30 flex items-center justify-center flex-shrink-0">
+                  <FileText className="w-5 h-5 text-pink-300" />
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <span className="font-bold text-xs text-slate-100 truncate max-w-[140px] sm:max-w-[180px]" title={getFileNameFromUrl(documentUrl)}>
+                    {getFileNameFromUrl(documentUrl)}
+                  </span>
+                  <span className="text-[10px] text-pink-300 font-semibold uppercase tracking-wider">
+                    {getFileExtension(getFileNameFromUrl(documentUrl))} Document
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDownloadMedia(documentUrl);
+                }}
+                className="p-2 rounded-xl bg-pink-600 hover:bg-pink-500 text-white transition-all shadow-md cursor-pointer flex-shrink-0"
+                title="Download File"
+              >
+                <Download className="w-4 h-4" />
+              </button>
+            </div>
+          ) : null}
+
+          {isEditing ? (
+            <div className="flex items-center gap-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+              <input
+                type="text"
+                value={editingText}
+                onChange={(e) => setEditingText(e.target.value)}
+                className="bg-black/40 text-white text-sm px-2.5 py-1 rounded-xl border border-white/30 focus:outline-none w-full"
+                autoFocus
+              />
+              <button
+                onClick={() => handleSaveEdit(msg.id)}
+                className="p-1 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 cursor-pointer"
+                title="Save"
+              >
+                <Check className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={handleCancelEdit}
+                className="p-1 rounded-lg bg-slate-700 text-[#27272a] hover:bg-slate-600 cursor-pointer"
+                title="Cancel"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            msg.text_content && msg.text_content !== audioUrl && msg.text_content !== videoUrl && msg.text_content !== imageUrl && msg.text_content !== documentUrl && (
+              <p className="text-sm leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-medium">
+                {msg.text_content}
+              </p>
+            )
+          )}
+
+          <div
+            className={`flex items-center justify-end gap-1.5 mt-1 text-[10px] font-medium ${
+              isMe ? 'text-pink-200/80' : 'text-slate-400'
+            }`}
+          >
+            {msg.is_edited && <span className="italic opacity-80">(edited)</span>}
+            <span>{formatTime(msg.timestamp)}</span>
+            {isMe && partnerSeenIso ? (
+              <span className="flex items-center gap-1 font-bold text-cyan-300">
+                <CheckCheck className="w-3.5 h-3.5 text-cyan-300" />
+                <span>{formatSeenAgo(partnerSeenIso)}</span>
+              </span>
+            ) : isMe ? (
+              <Check className="w-3.5 h-3.5 text-pink-200/80" />
+            ) : null}
+          </div>
+
+          {reactionEntries.length > 0 && (
+            <div
+              className={`absolute -bottom-3 z-10 flex items-center bg-[#18181b] border border-slate-700/80 rounded-full px-2 py-0.5 text-xs shadow-xl gap-0.5 ${
+                isMe ? 'left-2' : 'right-2'
+              }`}
+            >
+              {reactionEntries.map(([uid, emoji]) => (
+                <span key={uid} className="leading-none transform hover:scale-125 transition-transform">
+                  {emoji}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className={`relative flex-shrink-0 self-center flex items-center gap-0.5 z-10 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleStartReply(msg);
+            }}
+            className={`p-1.5 rounded-full text-slate-400 hover:text-pink-400 hover:bg-slate-800/80 transition-all cursor-pointer flex-shrink-0 ${
+              activeActionMsgId === msg.id ? 'opacity-100 bg-slate-800 text-pink-400' : 'opacity-80 md:opacity-0 md:group-hover:opacity-100'
+            }`}
+            title="Reply to message"
+          >
+            <Reply className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={(e) => toggleActionMenu(msg.id, e)}
+            className={`p-1.5 rounded-full text-slate-400 hover:text-pink-400 hover:bg-slate-800/80 transition-all cursor-pointer flex-shrink-0 ${
+              activeActionMsgId === msg.id ? 'opacity-100 bg-slate-800 text-pink-400' : 'opacity-80 md:opacity-0 md:group-hover:opacity-100'
+            }`}
+            title="React with Emoji"
+          >
+            <Smile className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={(e) => toggleActionMenu(msg.id, e)}
+            className={`p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-slate-800/80 transition-all cursor-pointer ${
+              activeActionMsgId === msg.id ? 'opacity-100 bg-slate-800 text-white' : 'opacity-80 md:opacity-0 md:group-hover:opacity-100'
+            }`}
+            title="Message options"
+          >
+            <MoreVertical className="w-4 h-4" />
+          </button>
+
+          {activeActionMsgId === msg.id && (
+            <div
+              className={`absolute z-50 w-56 sm:w-64 bg-[#18181b] border border-[#27272a] rounded-2xl shadow-2xl backdrop-blur-2xl p-2.5 space-y-2 animate-fadeIn ${
+                popoverPlacement === 'down' ? 'top-full mt-2' : 'bottom-full mb-2'
+              } ${
+                isMe ? 'left-0' : 'right-0'
+              }`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div>
+                <p className="text-[10px] uppercase tracking-wider font-extrabold text-slate-400 mb-1.5 px-1">
+                  Reactions
+                </p>
+                <div className="flex items-center justify-between bg-[#09090b] border border-[#27272a] rounded-xl p-1.5">
+                  {QUICK_EMOJIS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => {
+                        if (onReactMessage && msg.id) onReactMessage(msg.id, emoji);
+                        toggleActionMenu(null);
+                      }}
+                      className="hover:scale-135 active:scale-125 transition-transform text-base p-1 cursor-pointer"
+                      title={`React ${emoji}`}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-1 border-t border-[#27272a] space-y-1">
+                <button
+                  type="button"
+                  onClick={() => handleStartReply(msg)}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-pink-400 hover:bg-pink-950/30 transition-all cursor-pointer"
+                >
+                  <Reply className="w-4 h-4 text-pink-400" />
+                  <span>Reply</span>
+                </button>
+
+                {mediaUrlForDownload && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleDownloadMedia(mediaUrlForDownload);
+                      toggleActionMenu(null);
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-emerald-400 hover:bg-emerald-950/30 transition-all cursor-pointer"
+                  >
+                    <Download className="w-4 h-4 text-emerald-400" />
+                    <span>Download Media</span>
+                  </button>
+                )}
+
+                {msg.text_content && !audioUrl && !videoUrl && !imageUrl && (
+                  <button
+                    type="button"
+                    onClick={() => handleCopyText(msg)}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-cyan-400 hover:bg-cyan-950/30 transition-all cursor-pointer"
+                  >
+                    {copiedMsgId === (msg.id || msg.temp_id) ? (
+                      <>
+                        <Check className="w-4 h-4 text-emerald-400" />
+                        <span className="text-emerald-400 font-bold">Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-4 h-4 text-cyan-400" />
+                        <span>Copy Text</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {isMe && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleStartEdit(msg);
+                        toggleActionMenu(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-amber-400 hover:bg-amber-950/30 transition-all cursor-pointer"
+                    >
+                      <Edit3 className="w-4 h-4 text-amber-400" />
+                      <span>Edit Message</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onUnsendMessage && msg.id) onUnsendMessage(msg.id);
+                        toggleActionMenu(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-rose-400 hover:bg-rose-950/30 transition-all cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4 text-rose-400" />
+                      <span>Delete / Unsend</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const ChatInputBar = memo(function ChatInputBar({
+  onSendMessage,
+  onSendTypingStatus,
+  uploading,
+  connected,
+  partnerDisplayName,
+  isPartnerTyping,
+  replyingToMsg,
+  setReplyingToMsg,
+  currentUserId,
+  customNickname,
+  partnerUser,
+  defaultPartnerName,
+  startRecording,
+  stopAndSendRecording,
+  cancelRecording,
+  isRecording,
+  recordingTime,
+  isUploadingMedia,
+  fileInputRef,
+  handleFileClick,
+  handleFileChange,
+}) {
+  const [newMessage, setNewMessage] = useState('');
+  const inputRef = useRef(null);
+  const typingTimerRef = useRef(null);
+  const lastTypingSentRef = useRef(0);
+
+  const handleSend = (e) => {
+    if (e) e.preventDefault();
+    if ((!newMessage.trim() && !uploading) || isRecording) return;
+
+    if (onSendTypingStatus) onSendTypingStatus(false);
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    lastTypingSentRef.current = 0;
+
+    let initialReactions = {};
+    if (replyingToMsg) {
+      const replySenderName =
+        replyingToMsg.sender_id === currentUserId
+          ? 'You'
+          : customNickname || partnerUser?.display_name || partnerUser?.username || defaultPartnerName;
+
+      let previewText = replyingToMsg.text_content || '';
+      if (!previewText && replyingToMsg.media_url) {
+        previewText = isAudioMedia(replyingToMsg.media_url) ? '🎤 Voice note' : '📷 Photo';
+      }
+
+      initialReactions._reply = {
+        id: replyingToMsg.id || replyingToMsg.temp_id,
+        sender_id: replyingToMsg.sender_id,
+        sender_name: replySenderName,
+        text: previewText.length > 80 ? previewText.substring(0, 80) + '...' : previewText,
+        media_url: replyingToMsg.media_url || null,
+      };
+    }
+
+    onSendMessage(newMessage.trim(), null, initialReactions);
+    setNewMessage('');
+    setReplyingToMsg(null);
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+    }
+  };
+
+  const handleSendQuickHeart = () => {
+    onSendMessage('❤️');
+  };
+
+  return (
+    <div className="p-2.5 sm:p-4 px-3 sm:px-6 pb-3 sm:pb-5 relative z-10 sticky bottom-0 bg-[#0B0F17] flex-shrink-0">
+      {/* Realtime Partner Typing Indicator */}
+      {isPartnerTyping && (
+        <div className="mb-2 px-4 py-1.5 rounded-full bg-[#18181b]/95 border border-pink-500/40 w-fit flex items-center gap-2 shadow-lg animate-fadeIn backdrop-blur-md">
+          <div className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+            <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+            <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+          </div>
+          <span className="text-xs font-semibold text-pink-300">
+            {partnerDisplayName} is typing...
+          </span>
+        </div>
+      )}
+
+      {/* Reply Preview Header above input bar */}
+      {replyingToMsg && (
+        <div className="mb-2 px-4 py-2 rounded-2xl bg-[#18181b]/95 border border-[#27272a] shadow-xl flex items-center justify-between gap-3 animate-fadeIn backdrop-blur-md">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-1 h-8 rounded-full bg-gradient-to-b from-pink-500 to-purple-600 flex-shrink-0" />
+            <div className="flex flex-col text-xs min-w-0">
+              <span className="font-bold text-pink-400 flex items-center gap-1">
+                <Reply className="w-3.5 h-3.5" />
+                Replying to {replyingToMsg.sender_id === currentUserId ? 'yourself' : partnerDisplayName}
+              </span>
+              <span className="text-slate-300 truncate text-[11px]">
+                {replyingToMsg.text_content || (replyingToMsg.media_url ? (isAudioMedia(replyingToMsg.media_url) ? '🎤 Voice note' : '📷 Photo') : 'Message')}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setReplyingToMsg(null)}
+            className="p-1 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            title="Cancel reply"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      <form
+        onSubmit={handleSend}
+        className="bg-[#121212] border border-[#262626] rounded-3xl p-1.5 pl-3 sm:pl-4 shadow-2xl flex items-center gap-1.5 sm:gap-2 min-h-[46px]"
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
+          onChange={handleFileChange}
+          className="hidden"
+          id="file-upload"
+        />
+
+        {isRecording ? (
+          <div className="flex-1 flex items-center justify-between px-3 py-1 bg-red-950/40 border border-red-800/50 rounded-full animate-pulse">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping" />
+              <span className="text-xs font-bold text-red-400">
+                {isUploadingMedia ? 'Sending Voice Note...' : `Recording Voice Note... ${formatRecordingTime(recordingTime)}`}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={cancelRecording}
+                disabled={isUploadingMedia}
+                className="p-1.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors disabled:opacity-50"
+                title="Cancel Recording"
+              >
+                <Trash2 className="w-4 h-4 text-rose-400" />
+              </button>
+
+              <button
+                type="button"
+                onClick={stopAndSendRecording}
+                disabled={isUploadingMedia}
+                className="px-3 py-1.5 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold text-xs shadow-md flex items-center gap-1.5 disabled:opacity-50 cursor-pointer active:scale-95"
+                title="Send Voice Note"
+              >
+                {isUploadingMedia ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Sending...</span>
+                  </>
+                ) : (
+                  <span>Send</span>
+                )}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={handleFileClick}
+              disabled={uploading}
+              className="p-2 rounded-full text-slate-400 hover:text-white hover:bg-[#262626] transition-all flex-shrink-0 disabled:opacity-50 cursor-pointer active:scale-95"
+              title="Attach Media"
+            >
+              <Paperclip className="w-5 h-5" />
+            </button>
+
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={newMessage}
+              onChange={(e) => {
+                const val = e.target.value;
+                setNewMessage(val);
+                const now = Date.now();
+                if (onSendTypingStatus) {
+                  if (now - lastTypingSentRef.current > 2500) {
+                    onSendTypingStatus(true);
+                    lastTypingSentRef.current = now;
+                  }
+                  if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+                  typingTimerRef.current = setTimeout(() => {
+                    onSendTypingStatus(false);
+                    lastTypingSentRef.current = 0;
+                  }, 2500);
+                }
+
+                // Highly optimized native zero-thrashing height adjustment
+                const target = e.target;
+                if (!val) {
+                  target.style.height = 'auto';
+                } else if (!('fieldSizing' in document.documentElement.style)) {
+                  target.style.height = 'auto';
+                  target.style.height = `${Math.min(target.scrollHeight, 110)}px`;
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  if (newMessage.trim()) handleSend(e);
+                }
+              }}
+              placeholder={replyingToMsg ? "Type your reply..." : "Message..."}
+              style={{ fieldSizing: 'content', maxHeight: '110px' }}
+              className="flex-1 bg-transparent border-none text-slate-100 placeholder-slate-500 text-sm font-medium focus:outline-none focus:ring-0 py-1.5 resize-none overflow-y-auto"
+            />
+
+            {!newMessage.trim() && (
+              <button
+                type="button"
+                onClick={startRecording}
+                disabled={!connected || uploading}
+                className="p-2 rounded-full text-slate-400 hover:text-pink-400 hover:bg-[#262626] transition-all flex-shrink-0 cursor-pointer disabled:opacity-50 active:scale-95"
+                title="Record Voice Note"
+              >
+                <Mic className="w-5 h-5" />
+              </button>
+            )}
+
+            {!newMessage.trim() && (
+              <button
+                type="button"
+                onClick={handleSendQuickHeart}
+                disabled={!connected}
+                className="p-2 rounded-full text-pink-500 hover:scale-125 transition-transform flex-shrink-0 cursor-pointer disabled:opacity-50 active:scale-95"
+                title="Send Heart"
+              >
+                <Heart className="w-5 h-5 fill-pink-500" />
+              </button>
+            )}
+
+            {newMessage.trim() && (
+              <button
+                type="submit"
+                disabled={!connected || uploading}
+                className="px-4 py-2 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 hover:opacity-95 text-white font-bold text-xs shadow-md shadow-pink-600/30 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50 active:scale-95"
+              >
+                {uploading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <span>Send</span>
+                    <Send className="w-3.5 h-3.5" />
+                  </>
+                )}
+              </button>
+            )}
+          </>
+        )}
+      </form>
+    </div>
+  );
+});
 
 export default function ChatPanel({
   messages,
@@ -202,9 +1058,9 @@ export default function ChatPanel({
   const fileInputRef = useRef(null);
   const prevMessagesLengthRef = useRef(messages.length);
   const isInitialLoadRef = useRef(true);
-  const [newMessage, setNewMessage] = useState('');
-  const [lightboxMedia, setLightboxMedia] = useState(null); // { url, type: 'image' | 'video' }
-  const [previewMediaFile, setPreviewMediaFile] = useState(null); // { file, previewUrl, type, fileName }
+
+  const [lightboxMedia, setLightboxMedia] = useState(null);
+  const [previewMediaFile, setPreviewMediaFile] = useState(null);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [isNicknameModalOpen, setIsNicknameModalOpen] = useState(false);
 
@@ -223,10 +1079,6 @@ export default function ChatPanel({
   const [copiedMsgId, setCopiedMsgId] = useState(null);
   const [replyingToMsg, setReplyingToMsg] = useState(null);
   const [highlightedMsgId, setHighlightedMsgId] = useState(null);
-  const inputRef = useRef(null);
-  const typingTimerRef = useRef(null);
-  const lastTypingSentRef = useRef(0);
-
 
   const defaultPartnerName =
     currentUserId === 1 || username?.toLowerCase() === 'venkattejaa'
@@ -246,15 +1098,12 @@ export default function ChatPanel({
   const partnerIdNum = partnerUser?.user_id || (currentUserId === 1 ? 2 : currentUserId === 2 ? 1 : currentUserId === 3 ? 4 : currentUserId === 4 ? 3 : null);
   const isPartnerOnline = partnerIdNum && onlineUserIds.includes(String(partnerIdNum));
 
-  const handleStartReply = (msg) => {
+  const handleStartReply = useCallback((msg) => {
     setReplyingToMsg(msg);
     setActiveActionMsgId(null);
-    if (inputRef.current) {
-      inputRef.current.focus();
-    }
-  };
+  }, []);
 
-  const handleJumpToMessage = (msgId) => {
+  const handleJumpToMessage = useCallback((msgId) => {
     if (!msgId) return;
     const targetStr = String(msgId);
     const el = document.getElementById(`msg-${targetStr}`);
@@ -263,143 +1112,9 @@ export default function ChatPanel({
       setHighlightedMsgId(targetStr);
       setTimeout(() => setHighlightedMsgId(null), 2500);
     }
-  };
+  }, []);
 
-  const isAudioMedia = (url) => {
-    if (!url) return false;
-    const l = url.toLowerCase().split('?')[0];
-    return (
-      l.endsWith('.webm') ||
-      l.endsWith('.mp3') ||
-      l.endsWith('.wav') ||
-      l.endsWith('.m4a') ||
-      l.endsWith('.ogg') ||
-      l.endsWith('.aac') ||
-      l.endsWith('.flac') ||
-      l.endsWith('.opus') ||
-      l.includes('voicenote') ||
-      l.includes('voice_') ||
-      l.includes('audio_') ||
-      l.includes('audio/') ||
-      l.includes('audio') ||
-      l.includes('data:audio')
-    );
-  };
-
-  const isVideoMedia = (url) => {
-    if (!url) return false;
-    const l = url.toLowerCase();
-    return (
-      l.endsWith('.mp4') ||
-      l.endsWith('.mov') ||
-      l.endsWith('.mkv') ||
-      l.endsWith('.avi') ||
-      l.includes('video_')
-    );
-  };
-
-  const isImageMedia = (url) => {
-    if (!url) return false;
-    const l = url.toLowerCase().split('?')[0];
-    return (
-      l.endsWith('.jpg') ||
-      l.endsWith('.jpeg') ||
-      l.endsWith('.png') ||
-      l.endsWith('.gif') ||
-      l.endsWith('.webp') ||
-      l.endsWith('.heic') ||
-      l.endsWith('.heif') ||
-      l.endsWith('.bmp') ||
-      l.endsWith('.svg') ||
-      l.includes('image_') ||
-      l.includes('photo_') ||
-      l.includes('img_')
-    );
-  };
-
-  const isDocumentMedia = (url) => {
-    if (!url) return false;
-    const l = url.toLowerCase().split('?')[0];
-    return (
-      l.endsWith('.pdf') ||
-      l.endsWith('.doc') ||
-      l.endsWith('.docx') ||
-      l.endsWith('.xls') ||
-      l.endsWith('.xlsx') ||
-      l.endsWith('.ppt') ||
-      l.endsWith('.pptx') ||
-      l.endsWith('.zip') ||
-      l.endsWith('.rar') ||
-      l.endsWith('.txt') ||
-      l.endsWith('.csv') ||
-      l.includes('document_') ||
-      l.includes('file_')
-    );
-  };
-
-  const getFileNameFromUrl = (url) => {
-    if (!url) return 'Document';
-    try {
-      const parts = url.split('/');
-      const last = parts[parts.length - 1].split('?')[0];
-      return decodeURIComponent(last) || 'Document';
-    } catch (e) {
-      return 'Document';
-    }
-  };
-
-  const getFileExtension = (filename) => {
-    if (!filename) return 'FILE';
-    const parts = filename.split('.');
-    if (parts.length > 1) return parts[parts.length - 1].toUpperCase();
-    return 'FILE';
-  };
-
-  const getAudioUrl = (msg) => {
-    if (!msg) return null;
-    if (msg.media_url && isAudioMedia(msg.media_url)) return msg.media_url;
-    if (msg.text_content && isAudioMedia(msg.text_content)) return msg.text_content;
-    return null;
-  };
-
-  const getVideoUrl = (msg) => {
-    if (!msg) return null;
-    if (msg.media_url && isVideoMedia(msg.media_url)) return msg.media_url;
-    if (msg.text_content && isVideoMedia(msg.text_content)) return msg.text_content;
-    return null;
-  };
-
-  const getDocumentUrl = (msg) => {
-    if (!msg) return null;
-    if (msg.media_url && isDocumentMedia(msg.media_url)) return msg.media_url;
-    if (msg.text_content && isDocumentMedia(msg.text_content)) return msg.text_content;
-    return null;
-  };
-
-  const getImageUrl = (msg) => {
-    if (!msg) return null;
-    const url = msg.media_url;
-    if (url) {
-      if (isAudioMedia(url) || isVideoMedia(url) || isDocumentMedia(url)) return null;
-      if (url.includes('voicenote') || url.includes('audio_') || url.includes('data:audio')) return null;
-      return url;
-    }
-    if (msg.text_content) {
-      const trimmed = msg.text_content.trim();
-      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-        if (!isAudioMedia(trimmed) && !isVideoMedia(trimmed) && !isDocumentMedia(trimmed)) {
-          if (isImageMedia(trimmed)) return trimmed;
-        }
-      }
-    }
-    return null;
-  };
-
-  const getMediaUrl = (msg) => {
-    return getAudioUrl(msg) || getVideoUrl(msg) || getImageUrl(msg) || getDocumentUrl(msg);
-  };
-
-  const handleDownloadMedia = async (url) => {
+  const handleDownloadMedia = useCallback(async (url) => {
     if (!url) return;
     try {
       let ext = 'jpg';
@@ -412,13 +1127,11 @@ export default function ChatPanel({
 
       const fileName = `KMessenger_${Date.now()}.${ext}`;
 
-      // 1. Android Native Bridge
       if (window.AndroidNative && window.AndroidNative.downloadFile) {
         window.AndroidNative.downloadFile(url, fileName);
         return;
       }
 
-      // 2. Data URL (Base64) Download
       if (url.startsWith('data:')) {
         const a = document.createElement('a');
         a.href = url;
@@ -429,7 +1142,6 @@ export default function ChatPanel({
         return;
       }
 
-      // 3. Web Fetch & Blob Download Fallback
       const response = await fetch(url, { mode: 'cors' });
       const blob = await response.blob();
       const blobUrl = URL.createObjectURL(blob);
@@ -450,58 +1162,53 @@ export default function ChatPanel({
       a.click();
       document.body.removeChild(a);
     }
-  };
+  }, []);
 
-  const handleCopyText = (msg) => {
+  const handleCopyText = useCallback((msg) => {
     const text = msg.text_content || msg.media_url || '';
     if (text) {
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).catch((err) => {
-          console.error('Failed to copy text:', err);
-        });
+        navigator.clipboard.writeText(text).catch((err) => console.error('Failed to copy text:', err));
       } else {
         const textArea = document.createElement('textarea');
         textArea.value = text;
         document.body.appendChild(textArea);
         textArea.select();
-        try {
-          document.execCommand('copy');
-        } catch (e) {
-          console.error('Fallback copy failed:', e);
-        }
+        try { document.execCommand('copy'); } catch (e) {}
         document.body.removeChild(textArea);
       }
       setCopiedMsgId(msg.id || msg.temp_id || 'copied');
-      setTimeout(() => {
-        setCopiedMsgId(null);
-      }, 2000);
+      setTimeout(() => setCopiedMsgId(null), 2000);
     }
     setActiveActionMsgId(null);
-  };
+  }, []);
 
   // Touch Long-press & Popover Placement
-  const [popoverPlacement, setPopoverPlacement] = useState('up'); // 'up' | 'down'
+  const [popoverPlacement, setPopoverPlacement] = useState('up');
   const touchTimerRef = useRef(null);
 
-  const toggleActionMenu = (msgId, eOrTarget) => {
+  const toggleActionMenu = useCallback((msgId, eOrTarget) => {
     if (eOrTarget && eOrTarget.stopPropagation) eOrTarget.stopPropagation();
-    if (activeActionMsgId === msgId) {
+    if (!msgId) {
       setActiveActionMsgId(null);
       return;
     }
-    let placement = 'up';
-    const target = eOrTarget?.currentTarget || eOrTarget?.target || eOrTarget;
-    if (target && target.getBoundingClientRect) {
-      const rect = target.getBoundingClientRect();
-      if (rect.top < window.innerHeight * 0.48) {
-        placement = 'down';
+    setActiveActionMsgId((prev) => {
+      if (prev === msgId) return null;
+      let placement = 'up';
+      const target = eOrTarget?.currentTarget || eOrTarget?.target || eOrTarget;
+      if (target && target.getBoundingClientRect) {
+        const rect = target.getBoundingClientRect();
+        if (rect.top < window.innerHeight * 0.48) {
+          placement = 'down';
+        }
       }
-    }
-    setPopoverPlacement(placement);
-    setActiveActionMsgId(msgId);
-  };
+      setPopoverPlacement(placement);
+      return msgId;
+    });
+  }, []);
 
-  const handleTouchStart = (msgId, e) => {
+  const handleTouchStart = useCallback((msgId, e) => {
     const target = e?.currentTarget;
     touchTimerRef.current = setTimeout(() => {
       toggleActionMenu(msgId, target);
@@ -509,23 +1216,22 @@ export default function ChatPanel({
         try { navigator.vibrate(40); } catch(err) {}
       }
     }, 380);
-  };
+  }, [toggleActionMenu]);
 
-  const handleTouchEndOrMove = () => {
+  const handleTouchEndOrMove = useCallback(() => {
     if (touchTimerRef.current) {
       clearTimeout(touchTimerRef.current);
       touchTimerRef.current = null;
     }
-  };
+  }, []);
 
-  // Mute Notifications State (Synced with Supabase & LocalStorage per User ID)
+  // Mute Notifications State
   const [isMuted, setIsMuted] = useState(() => {
     if (!currentUserId) return localStorage.getItem('kmessenger_muted_notifications') === 'true';
     const stored = localStorage.getItem(`kmessenger_muted_${currentUserId}`);
     return stored !== null ? stored === 'true' : localStorage.getItem('kmessenger_muted_notifications') === 'true';
   });
 
-  // Fetch persistent mute setting from Supabase when logged in
   useEffect(() => {
     if (!currentUserId) return;
     apiGetMuteSetting(currentUserId)
@@ -559,7 +1265,6 @@ export default function ChatPanel({
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  // Close active action popup on outside click/tap
   useEffect(() => {
     const handleOutsideClick = () => {
       setActiveActionMsgId(null);
@@ -568,7 +1273,6 @@ export default function ChatPanel({
     return () => window.removeEventListener('click', handleOutsideClick);
   }, []);
 
-  // Mark unread messages as seen whenever app is active and visible on mobile & desktop
   useEffect(() => {
     const handleCheckVisibilityAndMarkSeen = () => {
       if (document.visibilityState === 'visible' && onMarkAllSeen) {
@@ -589,7 +1293,6 @@ export default function ChatPanel({
     };
   }, [onMarkAllSeen, messages]);
 
-  // Sound Chime & Browser Notification on incoming messages (ignores initial page load/refresh)
   useEffect(() => {
     if (isInitialLoadRef.current) {
       if (messages.length > 0) {
@@ -602,7 +1305,6 @@ export default function ChatPanel({
     if (messages.length > prevMessagesLengthRef.current) {
       const lastMsg = messages[messages.length - 1];
       if (lastMsg && Number(lastMsg.sender_id) === Number(partnerIdNum) && !isMuted) {
-        // Skip text notification chime for call signaling/records
         if (lastMsg.text_content && (lastMsg.text_content.startsWith('CALL_SIGNAL:') || lastMsg.text_content.startsWith('CALL_RECORD:'))) {
           prevMessagesLengthRef.current = messages.length;
           return;
@@ -632,10 +1334,10 @@ export default function ChatPanel({
       }
     }
     prevMessagesLengthRef.current = messages.length;
-  }, [messages, currentUserId, isMuted, partnerUser, customNickname, defaultPartnerName]);
+  }, [messages, currentUserId, isMuted, partnerUser, customNickname, defaultPartnerName, partnerIdNum]);
 
   // Voice Recorder Methods
-  const startRecording = async () => {
+  const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunksRef.current = [];
@@ -730,9 +1432,9 @@ export default function ChatPanel({
       console.error('Failed to access microphone:', err);
       alert('Microphone access is required to record voice notes.');
     }
-  };
+  }, [onUpload]);
 
-  const stopAndSendRecording = () => {
+  const stopAndSendRecording = useCallback(() => {
     if (!mediaRecorderRef.current) return;
     clearInterval(recordingTimerRef.current);
     isCancellingRef.current = false;
@@ -747,9 +1449,9 @@ export default function ChatPanel({
       setIsRecording(false);
       setRecordingTime(0);
     }
-  };
+  }, []);
 
-  const cancelRecording = () => {
+  const cancelRecording = useCallback(() => {
     if (!mediaRecorderRef.current) return;
     clearInterval(recordingTimerRef.current);
     isCancellingRef.current = true;
@@ -767,74 +1469,29 @@ export default function ChatPanel({
       setIsRecording(false);
       setRecordingTime(0);
     }
-  };
+  }, []);
 
-  const formatRecordingTime = (sec) => {
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return `${m}:${s < 10 ? '0' : ''}${s}`;
-  };
-
-  // Message Editing Handlers
-  const handleStartEdit = (msg) => {
+  const handleStartEdit = useCallback((msg) => {
     setEditingMsgId(msg.id);
     setEditingText(msg.text_content || '');
-  };
+  }, []);
 
-  const handleSaveEdit = (msgId) => {
+  const handleSaveEdit = useCallback((msgId) => {
     if (editingText.trim() && onEditMessage) {
       onEditMessage(msgId, editingText.trim());
     }
     setEditingMsgId(null);
     setEditingText('');
-  };
+  }, [editingText, onEditMessage]);
 
-  const handleCancelEdit = () => {
+  const handleCancelEdit = useCallback(() => {
     setEditingMsgId(null);
     setEditingText('');
-  };
+  }, []);
 
-  const handleSend = (e) => {
-    if (e) e.preventDefault();
-    if ((!newMessage.trim() && !uploading) || isRecording) return;
+  const handleFileClick = useCallback(() => fileInputRef.current?.click(), []);
 
-    if (onSendTypingStatus) onSendTypingStatus(false);
-    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-    lastTypingSentRef.current = 0;
-
-    let initialReactions = {};
-    if (replyingToMsg) {
-      const replySenderName =
-        replyingToMsg.sender_id === currentUserId
-          ? 'You'
-          : customNickname || partnerUser?.display_name || partnerUser?.username || defaultPartnerName;
-
-      let previewText = replyingToMsg.text_content || '';
-      if (!previewText && replyingToMsg.media_url) {
-        previewText = isAudioMedia(replyingToMsg.media_url) ? '🎤 Voice note' : '📷 Photo';
-      }
-
-      initialReactions._reply = {
-        id: replyingToMsg.id || replyingToMsg.temp_id,
-        sender_id: replyingToMsg.sender_id,
-        sender_name: replySenderName,
-        text: previewText.length > 80 ? previewText.substring(0, 80) + '...' : previewText,
-        media_url: replyingToMsg.media_url || null,
-      };
-    }
-
-    onSendMessage(newMessage.trim(), null, initialReactions);
-    setNewMessage('');
-    setReplyingToMsg(null);
-  };
-
-  const handleSendQuickHeart = () => {
-    onSendMessage('❤️');
-  };
-
-  const handleFileClick = () => fileInputRef.current?.click();
-
-  const handleFileChange = (e) => {
+  const handleFileChange = useCallback((e) => {
     const file = e.target.files[0];
     if (file) {
       const isVid = file.type.startsWith('video') || isVideoMedia(file.name);
@@ -856,7 +1513,7 @@ export default function ChatPanel({
       });
       e.target.value = '';
     }
-  };
+  }, []);
 
   const handleConfirmSendMedia = async () => {
     if (!previewMediaFile) return;
@@ -872,30 +1529,20 @@ export default function ChatPanel({
     }
   };
 
-  const formatTime = (iso) => {
-    if (!iso) return '';
-    const date = new Date(iso);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
-  const handleDoubleTap = (msgId) => {
+  const handleDoubleTap = useCallback((msgId) => {
     if (onReactMessage) {
       onReactMessage(msgId, '❤️');
     }
-  };
+  }, [onReactMessage]);
 
   return (
     <div className="flex flex-col h-full bg-[#0B0F17] relative overflow-hidden font-sans">
-      {/* Ambient background glow */}
       <div className="absolute top-1/4 right-1/4 w-96 h-96 bg-pink-900/10 rounded-full blur-[140px] pointer-events-none" />
       <div className="absolute bottom-1/3 left-1/4 w-96 h-96 bg-purple-900/10 rounded-full blur-[140px] pointer-events-none" />
 
-      {/* Top Header - Instagram DM Style with Permanent K-Messenger Brand Logo */}
+      {/* Top Header */}
       <div className="flex items-center justify-between p-3 sm:p-3.5 px-3 sm:px-6 border-b border-[#262626] bg-[#121212]/90 backdrop-blur-xl relative z-10">
-        
-        {/* Left: K-Messenger Brand Logo + Partner Info */}
         <div className="flex items-center gap-2.5 sm:gap-3.5">
-          {/* Permanent K-Messenger Brand Badge */}
           <div className="flex items-center gap-2 pr-2.5 border-r border-slate-800">
             <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-pink-500 via-purple-600 to-indigo-600 p-[1.5px] flex items-center justify-center shadow-lg shadow-purple-500/20 flex-shrink-0">
               <img src="/app_icon.png" alt="K-Messenger Logo" className="w-full h-full object-cover rounded-[10px]" />
@@ -905,7 +1552,6 @@ export default function ChatPanel({
             </span>
           </div>
 
-          {/* Partner Avatar with Story Ring */}
           <div className="relative group cursor-pointer" onClick={() => setIsNicknameModalOpen(true)}>
             <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full p-[2px] bg-gradient-to-tr from-yellow-500 via-red-500 to-purple-600 shadow-md">
               <div className="w-full h-full rounded-full bg-slate-900 overflow-hidden flex items-center justify-center border-2 border-[#121212]">
@@ -953,9 +1599,7 @@ export default function ChatPanel({
           </div>
         </div>
 
-        {/* Header Right Actions */}
         <div className="flex items-center gap-0.5 sm:gap-1">
-          {/* Mute / Unmute Notifications */}
           <button
             onClick={toggleMuteNotifications}
             className={`p-2 rounded-full transition-all cursor-pointer ${
@@ -966,7 +1610,6 @@ export default function ChatPanel({
             {isMuted ? <VolumeX className="w-4 h-4 sm:w-5 sm:h-5 text-rose-400" /> : <Volume2 className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400" />}
           </button>
 
-          {/* Audio Call */}
           <button
             onClick={() => onStartCall('audio')}
             disabled={!connected}
@@ -976,7 +1619,6 @@ export default function ChatPanel({
             <Phone className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
 
-          {/* Video Call */}
           <button
             onClick={() => onStartCall('video')}
             disabled={!connected}
@@ -986,7 +1628,6 @@ export default function ChatPanel({
             <Video className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
 
-          {/* Memory Lane / Media Vault Button */}
           <button
             onClick={onToggleMemoryLane}
             className={`p-2 rounded-full transition-all cursor-pointer ${
@@ -999,7 +1640,6 @@ export default function ChatPanel({
             <Layers className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
 
-          {/* Nickname & Chat Info */}
           <button
             onClick={() => setIsNicknameModalOpen(true)}
             className="p-2 rounded-full text-slate-300 hover:text-pink-400 hover:bg-[#262626] transition-all"
@@ -1008,7 +1648,6 @@ export default function ChatPanel({
             <Info className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
 
-          {/* User Profile Trigger */}
           <button
             onClick={onOpenProfile}
             className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-slate-800 border border-slate-700 overflow-hidden ml-1 hover:border-pink-500 transition-all flex items-center justify-center cursor-pointer"
@@ -1046,646 +1685,72 @@ export default function ChatPanel({
 
             const rawReactions = { ...(msg.reactions || {}) };
             const seenDict = rawReactions._seen || {};
-            delete rawReactions._seen;
-            const replyData = rawReactions._reply || null;
-            delete rawReactions._reply;
-
-            const reactionEntries = Object.entries(rawReactions);
-            const isEditing = editingMsgId === msg.id;
-
-            // Find partner seen timestamp if available
             const partnerSeenIso = Object.entries(seenDict).find(([uid]) => uid !== String(currentUserId))?.[1];
 
-            // Filter out transient WebRTC CALL_SIGNAL messages
-            if (msg.text_content && msg.text_content.startsWith('CALL_SIGNAL:')) {
-              return null;
-            }
-
-            // Render Call History System Record
-            if (msg.text_content && msg.text_content.startsWith('CALL_RECORD:')) {
-              const parts = msg.text_content.split(':');
-              const cType = parts[1] || 'video';
-              const cDuration = parseInt(parts[2] || '0', 10);
-              const cStatus = parts[3] || 'completed';
-              const isCaller = msg.sender_id === currentUserId;
-
-              let callTitle = '';
-              let callSubtext = '';
-
-              if (isCaller) {
-                if (cStatus === 'completed' && cDuration > 0) {
-                  callTitle = `Outgoing ${cType === 'video' ? 'Video' : 'Audio'} Call`;
-                  callSubtext = `You called ${partnerDisplayName} • ${formatRecordingTime(cDuration)}`;
-                } else if (cStatus === 'missed' || cStatus === 'unanswered') {
-                  callTitle = `Cancelled ${cType === 'video' ? 'Video' : 'Audio'} Call`;
-                  callSubtext = `No answer from ${partnerDisplayName}`;
-                } else {
-                  callTitle = `Outgoing ${cType === 'video' ? 'Video' : 'Audio'} Call`;
-                  callSubtext = `Call declined by ${partnerDisplayName}`;
-                }
-              } else {
-                if (cStatus === 'completed' && cDuration > 0) {
-                  callTitle = `Incoming ${cType === 'video' ? 'Video' : 'Audio'} Call`;
-                  callSubtext = `${partnerDisplayName} called you • ${formatRecordingTime(cDuration)}`;
-                } else if (cStatus === 'missed' || cStatus === 'unanswered') {
-                  callTitle = `Missed ${cType === 'video' ? 'Video' : 'Audio'} Call`;
-                  callSubtext = `Missed call from ${partnerDisplayName}`;
-                } else {
-                  callTitle = `Declined ${cType === 'video' ? 'Video' : 'Audio'} Call`;
-                  callSubtext = `Declined call from ${partnerDisplayName}`;
-                }
-              }
-
-              return (
-                <div key={msg.id || index} className="space-y-1 my-2">
-                  {showDateHeader && (
-                    <div className="flex items-center justify-center my-3">
-                      <span className="px-3 py-1 rounded-full text-[10px] font-semibold text-slate-400 bg-[#121212] border border-[#262626]">
-                        {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} •{' '}
-                        {new Date(msg.timestamp).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
-                      </span>
-                    </div>
-                  )}
-                  <div className="flex items-center justify-center my-1.5">
-                    <div className="flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-[#121824]/90 border border-slate-800/90 shadow-lg text-xs max-w-[90%] sm:max-w-md">
-                      <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
-                        cStatus === 'missed' || cStatus === 'declined' ? 'bg-rose-500/20 text-rose-400' : 'bg-indigo-500/20 text-indigo-400'
-                      }`}>
-                        {cType === 'audio' ? <Phone className="w-4.5 h-4.5" /> : <Video className="w-4.5 h-4.5" />}
-                      </div>
-                      <div className="flex flex-col min-w-0">
-                        <span className="font-extrabold text-slate-100 truncate">
-                          {callTitle}
-                        </span>
-                        <span className="text-[11px] text-slate-400 font-semibold truncate">
-                          {callSubtext} • {formatTime(msg.timestamp)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            }
-
-            const audioUrl = getAudioUrl(msg);
-            const videoUrl = getVideoUrl(msg);
-            const imageUrl = getImageUrl(msg);
-            const documentUrl = getDocumentUrl(msg);
-            const mediaUrlForDownload = getMediaUrl(msg);
-
-            const msgKey = String(msg.id || msg.temp_id || index);
-            const isHighlighted = highlightedMsgId && String(highlightedMsgId) === msgKey;
-
             return (
-              <div
-                key={msgKey}
-                id={`msg-${msgKey}`}
-                className={`space-y-1 transition-all duration-300 rounded-3xl p-1 ${
-                  isHighlighted ? 'bg-pink-500/30 ring-4 ring-pink-500 scale-[1.02] shadow-2xl z-20' : ''
-                }`}
-              >
-                {showDateHeader && (
-                  <div className="flex items-center justify-center my-3">
-                    <span className="px-3 py-1 rounded-full text-[10px] font-semibold text-slate-400 bg-[#121212] border border-[#262626]">
-                      {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} •{' '}
-                      {new Date(msg.timestamp).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
-                    </span>
-                  </div>
-                )}
-
-                <div className={`flex items-end gap-1.5 group relative ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
-                  {/* Partner Avatar for incoming messages */}
-                  {!isMe && (
-                    <div className="w-7 h-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-purple-300 flex-shrink-0 mb-1">
-                      {partnerDisplayName.charAt(0).toUpperCase()}
-                    </div>
-                  )}
-
-                  {/* Message Bubble Container */}
-                  <div
-                    onDoubleClick={() => msg.id && handleDoubleTap(msg.id)}
-                    onTouchStart={(e) => msg.id && handleTouchStart(msg.id, e)}
-                    onTouchEnd={handleTouchEndOrMove}
-                    onTouchMove={handleTouchEndOrMove}
-                    className={`relative px-4 py-2.5 max-w-[78%] sm:max-w-[65%] rounded-3xl shadow-md transition-all select-none touch-manipulation overflow-visible ${
-                      isMe
-                        ? 'bg-gradient-to-r from-pink-500 via-purple-600 to-indigo-600 text-white rounded-br-xs shadow-pink-950/20'
-                        : 'bg-[#262626] text-slate-100 border border-[#333] rounded-bl-xs shadow-slate-950/30'
-                    }`}
-                  >
-                    {/* Quoted Reply Header */}
-                    {replyData && (
-                      <div
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleJumpToMessage(replyData.id);
-                        }}
-                        className={`mb-2 p-2 rounded-2xl text-xs flex flex-col gap-0.5 cursor-pointer transition-all hover:opacity-90 border-l-4 ${
-                          isMe
-                            ? 'bg-black/30 text-white/90 border-pink-300'
-                            : 'bg-black/40 text-slate-200 border-purple-400'
-                        }`}
-                      >
-                        <div className="flex items-center gap-1 font-bold text-[11px] text-pink-300">
-                          <Reply className="w-3 h-3" />
-                          <span>{replyData.sender_name}</span>
-                        </div>
-                        <p className="line-clamp-2 text-[11px] opacity-90 break-words font-normal">
-                          {replyData.text || (replyData.media_url ? 'Attachment' : '')}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Audio Voice Note Bubble */}
-                    {audioUrl ? (
-                      <AudioPlayerBubble src={audioUrl} isMe={isMe} />
-                    ) : videoUrl ? (
-                      /* Inline Video Player with Lightbox Expand */
-                      <div className="mb-2 overflow-hidden rounded-2xl border border-white/10 relative group/vid cursor-pointer">
-                        <video
-                          src={videoUrl}
-                          controls
-                          playsInline
-                          preload="metadata"
-                          className="max-w-full max-h-72 rounded-2xl object-cover"
-                        />
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setLightboxMedia({ url: videoUrl, type: 'video' });
-                          }}
-                          className="absolute top-2 right-2 p-1.5 rounded-xl bg-black/60 backdrop-blur-md text-white hover:bg-black/80 transition-all cursor-pointer opacity-90 hover:opacity-100 shadow-md"
-                          title="Expand Video Full Screen"
-                        >
-                          <Maximize2 className="w-4 h-4 text-pink-300" />
-                        </button>
-                      </div>
-                    ) : imageUrl ? (
-                      /* Photo Image */
-                      <div
-                        className="mb-2 overflow-hidden rounded-2xl border border-white/10 group/img cursor-pointer relative"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setLightboxMedia({ url: imageUrl, type: 'image' });
-                        }}
-                      >
-                        <img
-                          src={imageUrl}
-                          alt="Shared media"
-                          className="max-w-full max-h-72 object-cover rounded-2xl transition-transform duration-300 group-hover/img:scale-105"
-                        />
-                        <div className="absolute top-2 right-2 p-1.5 rounded-xl bg-black/60 backdrop-blur-md text-white opacity-0 group-hover/img:opacity-100 transition-opacity shadow-md">
-                          <Maximize2 className="w-4 h-4 text-pink-300" />
-                        </div>
-                      </div>
-                    ) : documentUrl ? (
-                      /* Document Card */
-                      <div className="mb-2 p-2.5 rounded-2xl bg-black/40 border border-white/10 flex items-center justify-between gap-3 min-w-[200px] group/doc">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="w-10 h-10 rounded-xl bg-pink-500/20 border border-pink-500/30 flex items-center justify-center flex-shrink-0">
-                            <FileText className="w-5 h-5 text-pink-300" />
-                          </div>
-                          <div className="flex flex-col min-w-0">
-                            <span className="font-bold text-xs text-slate-100 truncate max-w-[140px] sm:max-w-[180px]" title={getFileNameFromUrl(documentUrl)}>
-                              {getFileNameFromUrl(documentUrl)}
-                            </span>
-                            <span className="text-[10px] text-pink-300 font-semibold uppercase tracking-wider">
-                              {getFileExtension(getFileNameFromUrl(documentUrl))} Document
-                            </span>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDownloadMedia(documentUrl);
-                          }}
-                          className="p-2 rounded-xl bg-pink-600 hover:bg-pink-500 text-white transition-all shadow-md cursor-pointer flex-shrink-0"
-                          title="Download File"
-                        >
-                          <Download className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ) : null}
-
-                    {/* Inline Editing Mode */}
-                    {isEditing ? (
-                      <div className="flex items-center gap-1.5 py-1" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="text"
-                          value={editingText}
-                          onChange={(e) => setEditingText(e.target.value)}
-                          className="bg-black/40 text-white text-sm px-2.5 py-1 rounded-xl border border-white/30 focus:outline-none w-full"
-                          autoFocus
-                        />
-                        <button
-                          onClick={() => handleSaveEdit(msg.id)}
-                          className="p-1 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 cursor-pointer"
-                          title="Save"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={handleCancelEdit}
-                          className="p-1 rounded-lg bg-slate-700 text-[#27272a] hover:bg-slate-600 cursor-pointer"
-                          title="Cancel"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ) : (
-                      /* Text Content (only if not audio, video, image, or document) */
-                      msg.text_content && msg.text_content !== audioUrl && msg.text_content !== videoUrl && msg.text_content !== imageUrl && msg.text_content !== documentUrl && (
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-medium">
-                          {msg.text_content}
-                        </p>
-                      )
-                    )}
-
-                    {/* Timestamp & Seen Status */}
-                    <div
-                      className={`flex items-center justify-end gap-1.5 mt-1 text-[10px] font-medium ${
-                        isMe ? 'text-pink-200/80' : 'text-slate-400'
-                      }`}
-                    >
-                      {msg.is_edited && <span className="italic opacity-80">(edited)</span>}
-                      <span>{formatTime(msg.timestamp)}</span>
-                      {isMe && partnerSeenIso ? (
-                        <span className="flex items-center gap-1 font-bold text-cyan-300">
-                          <CheckCheck className="w-3.5 h-3.5 text-cyan-300" />
-                          <span>{formatSeenAgo(partnerSeenIso)}</span>
-                        </span>
-                      ) : isMe ? (
-                        <Check className="w-3.5 h-3.5 text-pink-200/80" />
-                      ) : null}
-                    </div>
-
-                    {/* Reaction Badges attached to bottom corner */}
-                    {reactionEntries.length > 0 && (
-                      <div
-                        className={`absolute -bottom-3 z-10 flex items-center bg-[#18181b] border border-slate-700/80 rounded-full px-2 py-0.5 text-xs shadow-xl gap-0.5 ${
-                          isMe ? 'left-2' : 'right-2'
-                        }`}
-                      >
-                        {reactionEntries.map(([uid, emoji]) => (
-                          <span key={uid} className="leading-none transform hover:scale-125 transition-transform">
-                            {emoji}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Action Buttons & Dropdown Menu */}
-                  <div className={`relative flex-shrink-0 self-center flex items-center gap-0.5 z-10 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
-                    {/* Quick Reply Button */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleStartReply(msg);
-                      }}
-                      className={`p-1.5 rounded-full text-slate-400 hover:text-pink-400 hover:bg-slate-800/80 transition-all cursor-pointer flex-shrink-0 ${
-                        activeActionMsgId === msg.id ? 'opacity-100 bg-slate-800 text-pink-400' : 'opacity-80 md:opacity-0 md:group-hover:opacity-100'
-                      }`}
-                      title="Reply to message"
-                    >
-                      <Reply className="w-4 h-4" />
-                    </button>
-
-                    {/* Quick Smile Emoji Trigger */}
-                    <button
-                      type="button"
-                      onClick={(e) => toggleActionMenu(msg.id, e)}
-                      className={`p-1.5 rounded-full text-slate-400 hover:text-pink-400 hover:bg-slate-800/80 transition-all cursor-pointer flex-shrink-0 ${
-                        activeActionMsgId === msg.id ? 'opacity-100 bg-slate-800 text-pink-400' : 'opacity-80 md:opacity-0 md:group-hover:opacity-100'
-                      }`}
-                      title="React with Emoji"
-                    >
-                      <Smile className="w-4 h-4" />
-                    </button>
-
-                    {/* 3-Dots Menu Trigger */}
-                    <button
-                      type="button"
-                      onClick={(e) => toggleActionMenu(msg.id, e)}
-                      className={`p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-slate-800/80 transition-all cursor-pointer ${
-                        activeActionMsgId === msg.id ? 'opacity-100 bg-slate-800 text-white' : 'opacity-80 md:opacity-0 md:group-hover:opacity-100'
-                      }`}
-                      title="Message options"
-                    >
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
-
-                    {/* Dropdown Menu (Reactions, Reply, Download, Copy, Edit, Unsend) */}
-                    {activeActionMsgId === msg.id && (
-                      <div
-                        className={`absolute z-50 w-56 sm:w-64 bg-[#18181b] border border-[#27272a] rounded-2xl shadow-2xl backdrop-blur-2xl p-2.5 space-y-2 animate-fadeIn ${
-                          popoverPlacement === 'down' ? 'top-full mt-2' : 'bottom-full mb-2'
-                        } ${
-                          isMe ? 'left-0' : 'right-0'
-                        }`}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {/* Emojis for Reaction */}
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider font-extrabold text-slate-400 mb-1.5 px-1">
-                            Reactions
-                          </p>
-                          <div className="flex items-center justify-between bg-[#09090b] border border-[#27272a] rounded-xl p-1.5">
-                            {QUICK_EMOJIS.map((emoji) => (
-                              <button
-                                key={emoji}
-                                type="button"
-                                onClick={() => {
-                                  if (onReactMessage && msg.id) onReactMessage(msg.id, emoji);
-                                  setActiveActionMsgId(null);
-                                }}
-                                className="hover:scale-135 active:scale-125 transition-transform text-base p-1 cursor-pointer"
-                                title={`React ${emoji}`}
-                              >
-                                {emoji}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Options: Reply, Download, Copy Text, Edit & Unsend */}
-                        <div className="pt-1 border-t border-[#27272a] space-y-1">
-                          <button
-                            type="button"
-                            onClick={() => handleStartReply(msg)}
-                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-pink-400 hover:bg-pink-950/30 transition-all cursor-pointer"
-                          >
-                            <Reply className="w-4 h-4 text-pink-400" />
-                            <span>Reply</span>
-                          </button>
-
-                          {/* Download Media (Photos, Videos, Voice Notes) */}
-                          {mediaUrlForDownload && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                handleDownloadMedia(mediaUrlForDownload);
-                                setActiveActionMsgId(null);
-                              }}
-                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-emerald-400 hover:bg-emerald-950/30 transition-all cursor-pointer"
-                            >
-                              <Download className="w-4 h-4 text-emerald-400" />
-                              <span>Download Media</span>
-                            </button>
-                          )}
-
-                          {/* Copy Text (Only for actual text messages, NOT voice notes/media) */}
-                          {msg.text_content && !audioUrl && !videoUrl && !imageUrl && (
-                            <button
-                              type="button"
-                              onClick={() => handleCopyText(msg)}
-                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-cyan-400 hover:bg-cyan-950/30 transition-all cursor-pointer"
-                            >
-                              {copiedMsgId === (msg.id || msg.temp_id) ? (
-                                <>
-                                  <Check className="w-4 h-4 text-emerald-400" />
-                                  <span className="text-emerald-400 font-bold">Copied!</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Copy className="w-4 h-4 text-cyan-400" />
-                                  <span>Copy Text</span>
-                                </>
-                              )}
-                            </button>
-                          )}
-
-                          {isMe && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  handleStartEdit(msg);
-                                  setActiveActionMsgId(null);
-                                }}
-                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-amber-400 hover:bg-amber-950/30 transition-all cursor-pointer"
-                              >
-                                <Edit3 className="w-4 h-4 text-amber-400" />
-                                <span>Edit Message</span>
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (onUnsendMessage && msg.id) onUnsendMessage(msg.id);
-                                  setActiveActionMsgId(null);
-                                }}
-                                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-rose-400 hover:bg-rose-950/30 transition-all cursor-pointer"
-                              >
-                                <Trash2 className="w-4 h-4 text-rose-400" />
-                                <span>Delete / Unsend</span>
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
+              <MessageItem
+                key={msg.id || msg.temp_id || index}
+                msg={msg}
+                index={index}
+                showDateHeader={showDateHeader}
+                isMe={isMe}
+                partnerDisplayName={partnerDisplayName}
+                currentUserId={currentUserId}
+                partnerSeenIso={partnerSeenIso}
+                highlightedMsgId={highlightedMsgId}
+                editingMsgId={editingMsgId}
+                editingText={editingText}
+                setEditingText={setEditingText}
+                handleSaveEdit={handleSaveEdit}
+                handleCancelEdit={handleCancelEdit}
+                activeActionMsgId={activeActionMsgId}
+                popoverPlacement={popoverPlacement}
+                toggleActionMenu={toggleActionMenu}
+                handleTouchStart={handleTouchStart}
+                handleTouchEndOrMove={handleTouchEndOrMove}
+                handleDoubleTap={handleDoubleTap}
+                handleStartReply={handleStartReply}
+                handleJumpToMessage={handleJumpToMessage}
+                handleDownloadMedia={handleDownloadMedia}
+                setLightboxMedia={setLightboxMedia}
+                copiedMsgId={copiedMsgId}
+                handleCopyText={handleCopyText}
+                handleStartEdit={handleStartEdit}
+                onUnsendMessage={onUnsendMessage}
+                onReactMessage={onReactMessage}
+              />
             );
           })
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Instagram Pill Input Bar with Voice Note Controls */}
-      <div className="p-2.5 sm:p-4 px-3 sm:px-6 pb-3 sm:pb-5 relative z-10 sticky bottom-0 bg-[#0B0F17] flex-shrink-0">
-        {/* Realtime Partner Typing Indicator */}
-        {isPartnerTyping && (
-          <div className="mb-2 px-4 py-1.5 rounded-full bg-[#18181b]/95 border border-pink-500/40 w-fit flex items-center gap-2 shadow-lg animate-fadeIn backdrop-blur-md">
-            <div className="flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '0ms' }}></span>
-              <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '150ms' }}></span>
-              <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '300ms' }}></span>
-            </div>
-            <span className="text-xs font-semibold text-pink-300">
-              {partnerDisplayName} is typing...
-            </span>
-          </div>
-        )}
+      {/* Instagram Pill Input Bar */}
+      <ChatInputBar
+        onSendMessage={onSendMessage}
+        onSendTypingStatus={onSendTypingStatus}
+        uploading={uploading}
+        connected={connected}
+        partnerDisplayName={partnerDisplayName}
+        isPartnerTyping={isPartnerTyping}
+        replyingToMsg={replyingToMsg}
+        setReplyingToMsg={setReplyingToMsg}
+        currentUserId={currentUserId}
+        customNickname={customNickname}
+        partnerUser={partnerUser}
+        defaultPartnerName={defaultPartnerName}
+        startRecording={startRecording}
+        stopAndSendRecording={stopAndSendRecording}
+        cancelRecording={cancelRecording}
+        isRecording={isRecording}
+        recordingTime={recordingTime}
+        isUploadingMedia={isUploadingMedia}
+        fileInputRef={fileInputRef}
+        handleFileClick={handleFileClick}
+        handleFileChange={handleFileChange}
+      />
 
-        {/* Reply Preview Header above input bar */}
-        {replyingToMsg && (
-          <div className="mb-2 px-4 py-2 rounded-2xl bg-[#18181b]/95 border border-[#27272a] shadow-xl flex items-center justify-between gap-3 animate-fadeIn backdrop-blur-md">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-1 h-8 rounded-full bg-gradient-to-b from-pink-500 to-purple-600 flex-shrink-0" />
-              <div className="flex flex-col text-xs min-w-0">
-                <span className="font-bold text-pink-400 flex items-center gap-1">
-                  <Reply className="w-3.5 h-3.5" />
-                  Replying to {replyingToMsg.sender_id === currentUserId ? 'yourself' : partnerDisplayName}
-                </span>
-                <span className="text-slate-300 truncate text-[11px]">
-                  {replyingToMsg.text_content || (replyingToMsg.media_url ? (isAudioMedia(replyingToMsg.media_url) ? '🎤 Voice note' : '📷 Photo') : 'Message')}
-                </span>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setReplyingToMsg(null)}
-              className="p-1 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-              title="Cancel reply"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-
-        <form
-          onSubmit={handleSend}
-          className="bg-[#121212] border border-[#262626] rounded-3xl p-1.5 pl-3 sm:pl-4 shadow-2xl flex items-center gap-1.5 sm:gap-2 min-h-[46px]"
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
-            onChange={handleFileChange}
-            className="hidden"
-            id="file-upload"
-          />
-
-          {isRecording ? (
-            /* Voice Recording Active UI */
-            <div className="flex-1 flex items-center justify-between px-3 py-1 bg-red-950/40 border border-red-800/50 rounded-full animate-pulse">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping" />
-                <span className="text-xs font-bold text-red-400">
-                  {isUploadingMedia ? 'Sending Voice Note...' : `Recording Voice Note... ${formatRecordingTime(recordingTime)}`}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={cancelRecording}
-                  disabled={isUploadingMedia}
-                  className="p-1.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors disabled:opacity-50"
-                  title="Cancel Recording"
-                >
-                  <Trash2 className="w-4 h-4 text-rose-400" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={stopAndSendRecording}
-                  disabled={isUploadingMedia}
-                  className="px-3 py-1.5 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold text-xs shadow-md flex items-center gap-1.5 disabled:opacity-50 cursor-pointer active:scale-95"
-                  title="Send Voice Note"
-                >
-                  {isUploadingMedia ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Sending...</span>
-                    </>
-                  ) : (
-                    <span>Send</span>
-                  )}
-                </button>
-              </div>
-            </div>
-          ) : (
-            /* Standard Input Bar UI */
-            <>
-              {/* Camera / Attachment Icon */}
-              <button
-                type="button"
-                onClick={handleFileClick}
-                disabled={uploading}
-                className="p-2 rounded-full text-slate-400 hover:text-white hover:bg-[#262626] transition-all flex-shrink-0 disabled:opacity-50 cursor-pointer active:scale-95"
-                title="Attach Media"
-              >
-                <Paperclip className="w-5 h-5" />
-              </button>
-
-              {/* Auto-expanding Textarea Input like Instagram */}
-              <textarea
-                ref={inputRef}
-                rows={1}
-                value={newMessage}
-                onChange={(e) => {
-                  setNewMessage(e.target.value);
-                  const now = Date.now();
-                  if (onSendTypingStatus) {
-                    if (now - lastTypingSentRef.current > 2500) {
-                      onSendTypingStatus(true);
-                      lastTypingSentRef.current = now;
-                    }
-                    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-                    typingTimerRef.current = setTimeout(() => {
-                      onSendTypingStatus(false);
-                      lastTypingSentRef.current = 0;
-                    }, 2500);
-                  }
-                  e.target.style.height = 'auto';
-                  e.target.style.height = `${Math.min(e.target.scrollHeight, 110)}px`;
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    if (newMessage.trim()) handleSend(e);
-                  }
-                }}
-                placeholder={replyingToMsg ? "Type your reply..." : "Message..."}
-                className="flex-1 bg-transparent border-none text-slate-100 placeholder-slate-500 text-sm font-medium focus:outline-none focus:ring-0 py-1.5 resize-none max-h-28 overflow-y-auto"
-              />
-
-              {/* Mic Voice Note Button when empty */}
-              {!newMessage.trim() && (
-                <button
-                  type="button"
-                  onClick={startRecording}
-                  disabled={!connected || uploading}
-                  className="p-2 rounded-full text-slate-400 hover:text-pink-400 hover:bg-[#262626] transition-all flex-shrink-0 cursor-pointer disabled:opacity-50 active:scale-95"
-                  title="Record Voice Note"
-                >
-                  <Mic className="w-5 h-5" />
-                </button>
-              )}
-
-              {/* Quick Heart Icon when empty */}
-              {!newMessage.trim() && (
-                <button
-                  type="button"
-                  onClick={handleSendQuickHeart}
-                  disabled={!connected}
-                  className="p-2 rounded-full text-pink-500 hover:scale-125 transition-transform flex-shrink-0 cursor-pointer disabled:opacity-50 active:scale-95"
-                  title="Send Heart"
-                >
-                  <Heart className="w-5 h-5 fill-pink-500" />
-                </button>
-              )}
-
-              {/* Send Button when typing */}
-              {newMessage.trim() && (
-                <button
-                  type="submit"
-                  disabled={!connected || uploading}
-                  className="px-4 py-2 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 hover:opacity-95 text-white font-bold text-xs shadow-md shadow-pink-600/30 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50 active:scale-95"
-                >
-                  {uploading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <>
-                      <span>Send</span>
-                      <Send className="w-3.5 h-3.5" />
-                    </>
-                  )}
-                </button>
-              )}
-            </>
-          )}
-        </form>
-      </div>
-
-      {/* Unified Lightbox Preview Modal for Photos & Videos */}
+      {/* Lightbox Preview Modal */}
       {lightboxMedia && createPortal(
         <div
           className="fixed inset-0 bg-slate-950/95 backdrop-blur-2xl flex items-center justify-center p-4 animate-fadeIn"
@@ -1771,14 +1836,12 @@ export default function ChatPanel({
               </button>
             </div>
 
-            {/* Media/Document Preview Container */}
             <div className="max-h-72 overflow-hidden rounded-2xl bg-black flex items-center justify-center mb-4 border border-[#27272a] p-4">
               {previewMediaFile.type.startsWith('video') ? (
                 <video src={previewMediaFile.previewUrl} controls playsInline className="max-h-72 max-w-full rounded-2xl" />
               ) : previewMediaFile.type.startsWith('image') ? (
                 <img src={previewMediaFile.previewUrl} alt="Preview" className="max-h-72 max-w-full object-contain rounded-2xl" />
               ) : (
-                /* Document or Audio File Card Preview */
                 <div className="flex flex-col items-center justify-center py-6 px-4 text-center gap-3 w-full bg-[#18181b]/80 border border-slate-800 rounded-2xl">
                   <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-pink-500 via-purple-600 to-indigo-600 p-0.5 shadow-lg">
                     <div className="w-full h-full rounded-[14px] bg-[#121212] flex items-center justify-center text-pink-400">
@@ -1804,7 +1867,6 @@ export default function ChatPanel({
               )}
             </div>
 
-            {/* Action Buttons */}
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -1829,7 +1891,6 @@ export default function ChatPanel({
         document.body
       )}
 
-      {/* Nickname Modal */}
       <NicknameModal
         isOpen={isNicknameModalOpen}
         onClose={() => setIsNicknameModalOpen(false)}
