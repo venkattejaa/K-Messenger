@@ -348,6 +348,12 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
     }
   }, []);
 
+  const editMessage = useCallback(async (messageId, newText) => {
+    if (isSupabaseConfigured()) {
+      await apiEditMessage(messageId, newText);
+    }
+  }, []);
+
   const sendTypingStatus = useCallback(
     (isTyping) => {
       if (isSupabaseConfigured() && signalChannelRef.current) {
