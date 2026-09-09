@@ -225,6 +225,8 @@ export default function ChatPanel({
   const [highlightedMsgId, setHighlightedMsgId] = useState(null);
   const inputRef = useRef(null);
   const typingTimerRef = useRef(null);
+  const lastTypingSentRef = useRef(0);
+
 
   const defaultPartnerName =
     currentUserId === 1 || username?.toLowerCase() === 'venkattejaa'
@@ -798,6 +800,7 @@ export default function ChatPanel({
 
     if (onSendTypingStatus) onSendTypingStatus(false);
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    lastTypingSentRef.current = 0;
 
     let initialReactions = {};
     if (replyingToMsg) {
@@ -1609,11 +1612,16 @@ export default function ChatPanel({
                 value={newMessage}
                 onChange={(e) => {
                   setNewMessage(e.target.value);
+                  const now = Date.now();
                   if (onSendTypingStatus) {
-                    onSendTypingStatus(true);
+                    if (now - lastTypingSentRef.current > 2500) {
+                      onSendTypingStatus(true);
+                      lastTypingSentRef.current = now;
+                    }
                     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
                     typingTimerRef.current = setTimeout(() => {
                       onSendTypingStatus(false);
+                      lastTypingSentRef.current = 0;
                     }, 2500);
                   }
                   e.target.style.height = 'auto';

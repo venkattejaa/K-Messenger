@@ -10,6 +10,9 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Build
 import android.os.IBinder
+import android.media.AudioAttributes
+import android.media.RingtoneManager
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import org.json.JSONArray
 import java.io.BufferedReader
@@ -29,7 +32,7 @@ class MessagePollingService : Service() {
     private val SUPABASE_URL = "https://eccrzzfjljzqmwjcizwj.supabase.co"
     private val ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVjY3J6emZqbGp6cW13amNpendqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3MTYxNjUsImV4cCI6MjEwNDI5MjE2NX0.goZ1-JPcAUkO9JXVCDjTFPkcxBJMOz2utUr0f44JBXI"
     
-    private val POLLING_INTERVAL = 8L
+    private val POLLING_INTERVAL = 2L
     
     private var scheduler: ScheduledExecutorService? = null
     private lateinit var sharedPreferences: SharedPreferences
@@ -99,6 +102,12 @@ class MessagePollingService : Service() {
                 vibrationPattern = longArrayOf(200, 100, 200)
             }
             
+            val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+            val audioAttr = AudioAttributes.Builder()
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                .build()
+
             val callChannel = NotificationChannel(
                 "kmessenger_bg_calls_channel",
                 "Background Calls",
@@ -107,6 +116,7 @@ class MessagePollingService : Service() {
                 description = "Incoming call notifications when app is in background"
                 enableVibration(true)
                 vibrationPattern = longArrayOf(500, 200, 500, 200, 500)
+                setSound(ringtoneUri, audioAttr)
             }
             
             notificationManager.createNotificationChannel(serviceChannel)
@@ -196,6 +206,20 @@ class MessagePollingService : Service() {
     private fun showNotification(id: Int, title: String, body: String, isCall: Boolean) {
         val channelId = if (isCall) "kmessenger_bg_calls_channel" else "kmessenger_bg_messages_channel"
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        if (isCall) {
+            try {
+                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                @Suppress("DEPRECATION")
+                val wakeLock = pm.newWakeLock(
+                    PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                    "KMessenger:IncomingCallWakeLock"
+                )
+                wakeLock.acquire(10000)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
 
         val mainIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP

@@ -111,6 +111,16 @@ function App() {
   // Connect handleSignal to ref
   signalHandlerRef.current = handleSignal;
 
+  // Expose auto accept call for Android native notification action
+  useEffect(() => {
+    window.__autoAcceptCall = () => {
+      if (acceptCall) acceptCall();
+    };
+    return () => {
+      delete window.__autoAcceptCall;
+    };
+  }, [acceptCall]);
+
   const [notifPermission, setNotifPermission] = useState(() => {
     return typeof Notification !== 'undefined' ? Notification.permission : 'granted';
   });
