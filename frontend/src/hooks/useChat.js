@@ -63,6 +63,10 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
     setConnected(true);
     setError(null);
 
+    const effectivePartnerId = partnerId || (userId ? (userId === 1 ? 2 : userId === 2 ? 1 : userId === 3 ? 4 : userId === 4 ? 3 : null) : null);
+    const myId = Number(userId);
+    const pId = Number(effectivePartnerId);
+
     // 1. Subscribe to Postgres Changes on 'messages' table
     const msgChannel = supabase
       .channel('messages_realtime_channel')
@@ -74,7 +78,7 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
           if (newRow.text_content && newRow.text_content.startsWith('USER_SETTING:')) return;
           
           const sId = Number(newRow.sender_id);
-          const myId = Number(userId);
+          if (myId && pId && sId !== myId && sId !== pId) return;
 
           const formatted = {
             id: newRow.id,
@@ -108,7 +112,7 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
           if (payload.old && payload.old.id) {
             setMessages((prev) => prev.filter((m) => Number(m.id) !== Number(payload.old.id)));
           } else {
-            setMessages([]);
+            fetchMessages();
           }
         }
       )
@@ -117,7 +121,6 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
     realtimeChannelRef.current = msgChannel;
 
     // 2. Broadcast Channel for WebRTC Video & Voice Calling Signals and Typing Status (Isolated per conversation pair)
-    const effectivePartnerId = partnerId || (userId ? (userId === 1 ? 2 : userId === 2 ? 1 : userId === 3 ? 4 : userId === 4 ? 3 : null) : null);
     const callRoomName = (userId && effectivePartnerId) ? `call_room_${Math.min(userId, effectivePartnerId)}_${Math.max(userId, effectivePartnerId)}` : 'call_room';
     const sigChannel = supabase
       .channel(callRoomName)
