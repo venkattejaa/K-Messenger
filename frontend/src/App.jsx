@@ -60,17 +60,17 @@ function App() {
   }, []);
 
   const partnerUser = (() => {
-    if (!currentUserId || !allUsers.length) return null;
+    if (!currentUserId) return null;
     const uLower = (username || '').toLowerCase();
     if (uLower === 'venkattejaa' || currentUserId === 1) {
-      return allUsers.find(u => u.user_id === 2 || u.username?.toLowerCase() === 'srevarsha' || u.username?.toLowerCase() === 'chinni_is_buzy');
+      return allUsers.find(u => u.user_id === 2 || u.username?.toLowerCase() === 'srevarsha' || u.username?.toLowerCase() === 'chinni_is_buzy') || { user_id: 2, display_name: 'Srevarsha', username: 'srevarsha' };
     }
     if (uLower === 'srevarsha' || uLower === 'chinni_is_buzy' || currentUserId === 2) {
-      return allUsers.find(u => u.user_id === 1 || u.username?.toLowerCase() === 'venkattejaa');
+      return allUsers.find(u => u.user_id === 1 || u.username?.toLowerCase() === 'venkattejaa') || { user_id: 1, display_name: 'Venkat Teja', username: 'venkattejaa' };
     }
-    if (uLower === 'tester1' || currentUserId === 3) return allUsers.find(u => u.user_id === 4 || u.username === 'tester2');
-    if (uLower === 'tester2' || currentUserId === 4) return allUsers.find(u => u.user_id === 3 || u.username === 'tester1');
-    return allUsers.find(u => u.user_id !== currentUserId);
+    if (uLower === 'tester1' || currentUserId === 3) return allUsers.find(u => u.user_id === 4 || u.username === 'tester2') || { user_id: 4, display_name: 'Tester 2', username: 'tester2' };
+    if (uLower === 'tester2' || currentUserId === 4) return allUsers.find(u => u.user_id === 3 || u.username === 'tester1') || { user_id: 3, display_name: 'Tester 1', username: 'tester1' };
+    return allUsers.find(u => u.user_id !== currentUserId) || null;
   })();
 
   const {

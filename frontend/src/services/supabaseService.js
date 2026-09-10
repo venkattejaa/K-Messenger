@@ -315,7 +315,7 @@ export const apiGetMessages = async (userId = null, partnerId = null) => {
     let query = supabase
       .from('messages')
       .select('*')
-      .order('timestamp', { ascending: false })
+      .order('id', { ascending: false })
       .limit(5000);
 
     if (effectiveUserId && effectivePartnerId) {
@@ -326,9 +326,9 @@ export const apiGetMessages = async (userId = null, partnerId = null) => {
 
     if (error) {
       console.error('Error fetching messages from Supabase:', error);
-      return [];
+      return null;
     }
-    if (!data) return [];
+    if (!data) return null;
 
     // Reverse array to restore chronological order (oldest to newest)
     const chronologicalData = [...data].reverse();
@@ -353,7 +353,7 @@ export const apiGetMessages = async (userId = null, partnerId = null) => {
   } catch (e) {
     console.error('Fetch messages error:', e);
   }
-  return [];
+  return null;
 };
 
 // 7. Send Message

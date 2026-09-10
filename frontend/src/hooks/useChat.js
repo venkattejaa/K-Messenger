@@ -12,8 +12,32 @@ import {
 } from '../services/supabaseService';
 import { getWsUrl } from '../config';
 
+function getCachedMessages(uId) {
+  if (!uId) return [];
+  try {
+    const cached = localStorage.getItem(`kmessenger_messages_cache_${uId}`);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {
+    console.error('Failed to read messages cache:', e);
+  }
+  return [];
+}
+
+function setCachedMessages(uId, msgs) {
+  if (!uId || !Array.isArray(msgs)) return;
+  try {
+    const sliceToSave = msgs.length > 2000 ? msgs.slice(msgs.length - 2000) : msgs;
+    localStorage.setItem(`kmessenger_messages_cache_${uId}`, JSON.stringify(sliceToSave));
+  } catch (e) {
+    console.error('Failed to save messages cache:', e);
+  }
+}
+
 export function useChat(userId, clientId, onSignal, partnerId = null) {
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(() => getCachedMessages(userId));
   const [onlineUserIds, setOnlineUserIds] = useState([]);
   const [isPartnerTyping, setIsPartnerTyping] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -24,6 +48,16 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
   const presenceChannelRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const onSignalRef = useRef(onSignal);
+
+  const updateMessagesState = useCallback((newValOrFn) => {
+    setMessages((prev) => {
+      const next = typeof newValOrFn === 'function' ? newValOrFn(prev) : newValOrFn;
+      if (Array.isArray(next) && next.length > 0 && userId) {
+        setCachedMessages(userId, next);
+      }
+      return next;
+    });
+  }, [userId]);
 
   useEffect(() => {
     onSignalRef.current = onSignal;
@@ -44,12 +78,21 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
   const fetchMessages = useCallback(async () => {
     try {
       const msgs = await apiGetMessages(userId, partnerId);
-      setMessages(msgs);
-      clearNativeNotifications();
+      if (msgs !== null && Array.isArray(msgs)) {
+        updateMessagesState((prev) => {
+          // If server returns empty array but we already have cached/previous messages,
+          // do NOT overwrite state with [] to prevent accidental message wiping
+          if (msgs.length === 0 && prev.length > 0) {
+            return prev;
+          }
+          return msgs;
+        });
+        clearNativeNotifications();
+      }
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     }
-  }, [userId, partnerId, clearNativeNotifications]);
+  }, [userId, partnerId, clearNativeNotifications, updateMessagesState]);
 
   const markAllSeen = useCallback(async (targetPartnerId) => {
     const pId = targetPartnerId || partnerId || (userId === 1 ? 2 : userId === 2 ? 1 : userId === 3 ? 4 : userId === 4 ? 3 : null);
@@ -88,7 +131,7 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
             reactions: typeof newRow.reactions === 'string' ? JSON.parse(newRow.reactions) : newRow.reactions || {},
             timestamp: newRow.timestamp,
           };
-          setMessages((prev) => {
+          updateMessagesState((prev) => {
             if (prev.some((m) => Number(m.id) === Number(formatted.id))) return prev;
             return [...prev, formatted];
           });
@@ -100,7 +143,7 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
         (payload) => {
           const updated = payload.new;
           const rx = typeof updated.reactions === 'string' ? JSON.parse(updated.reactions) : updated.reactions || {};
-          setMessages((prev) =>
+          updateMessagesState((prev) =>
             prev.map((m) => (Number(m.id) === Number(updated.id) ? { ...m, text_content: updated.text_content, media_url: updated.media_url, reactions: rx } : m))
           );
         }
@@ -110,7 +153,7 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
         { event: 'DELETE', schema: 'public', table: 'messages' },
         (payload) => {
           if (payload.old && payload.old.id) {
-            setMessages((prev) => prev.filter((m) => Number(m.id) !== Number(payload.old.id)));
+            updateMessagesState((prev) => prev.filter((m) => Number(m.id) !== Number(payload.old.id)));
           } else {
             fetchMessages();
           }
@@ -310,6 +353,9 @@ export function useChat(userId, clientId, onSignal, partnerId = null) {
   const clearMessages = useCallback(async () => {
     if (!userId || !partnerId) return;
     await apiClearMessages(userId, partnerId);
+    try {
+      localStorage.removeItem(`kmessenger_messages_cache_${userId}`);
+    } catch (e) {}
     setMessages([]);
   }, [userId, partnerId]);
 
